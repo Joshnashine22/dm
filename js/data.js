@@ -76,7 +76,7 @@ window.DashboardData = {
       { name: "School Furniture - S", spend: 12944.72, interactions: 326, ctr: 9.86, cpc: 39.71, conv: 17, rating: "Strong" },
       { name: "School Furniture - Search", spend: 3959.72, interactions: 222, ctr: 8.21, cpc: 17.84, conv: 34, rating: "Top" },
       { name: "Performance Max-14- Shop Ad", spend: 6059.52, interactions: 1446, ctr: 1.64, cpc: 4.19, conv: 0, rating: "Low ROI" },
-      { name: "AI-Ad-Leads-Search-59", spend: 4547.65, interactions: 350, ctr: 5.42, cpc: 12.99, conv: 3, rating: "Review" }
+      { name: "Display Intent Ads- WFH", spend: 2775.46, interactions: 350, ctr: 5.42, cpc: 12.99, conv: 3, rating: "Review" }
     ],
     February: [
       { name: "School Furniture - S", spend: 12794.27, interactions: 370, ctr: 8.74, cpc: 34.58, conv: 41, rating: "Top" },
@@ -101,9 +101,9 @@ window.DashboardData = {
     ]
   },
   metaAdsMonthly: [
-    { month: "January", spend: 45072, leads: 626, cpl: 72 },
-    { month: "February", spend: 36482, leads: 629, cpl: 58 },
-    { month: "March", spend: 39760, leads: 568, cpl: 70 }
+    { month: "January", spend: 45274.54, leads: 626, cpl: 72 },
+    { month: "February", spend: 39677.04, leads: 629, cpl: 58 },
+    { month: "March", spend: 40034.91, leads: 568, cpl: 70 }
   ],
   citiesData: [
     { city: "Kondapur, Hyderabad", state: "Telangana", month: "March", value: 1508276 },
