@@ -161,6 +161,11 @@ window.DashboardData = {
     const roas = totalSpend > 0 ? (totalConvValue / totalSpend) : 0;
     const convRate = totalLeads > 0 ? (totalConversions / totalLeads) * 100 : 0;
     const costPerConv = totalConversions > 0 ? (totalSpend / totalConversions) : 0;
+    console.log("Google Spend:", googleSpend);
+    console.log("Meta Spend:", metaSpend);
+    console.log("Total Spend:", totalSpend);
+    console.log("Total Conversions:", totalConversions);
+    console.log("Cost Per Conv:", costPerConv);
     const seo = isQ1
       ? this.seoData
       : this.seoData.filter(d => d.month === monthFilter);
