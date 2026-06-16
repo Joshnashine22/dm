@@ -26,14 +26,23 @@
   }
   // Update DOM elements with active state metrics
   function updateKPIs(data) {
-    document.getElementById('totalLeadsVal').innerText = formatNumber(data.totalLeads);
-    document.getElementById('totalLeadsSub').innerText = `FB: ${formatNumber(data.fbLeads)} · Others: ${formatNumber(data.otherLeads)}`;
-    document.getElementById('totalSpendVal').innerText = formatCurrencyLakhs(data.totalSpend);
-    document.getElementById('totalSpendSub').innerText = `Meta ${formatCurrencyThousands(data.metaSpend)} · Google ${formatCurrencyThousands(data.googleSpend)}`;
-    document.getElementById('conversionsVal').innerText = formatNumber(data.totalConversions);
-    document.getElementById('conversionsSub').innerText = `Conv. rate: ${data.convRate.toFixed(2)}%`;
-    document.getElementById('convValueVal').innerText = formatCurrencyLakhs(data.totalConvValue);
-    document.getElementById('convValueSub').innerText = `ROAS: ${data.roas.toFixed(1)}x`;
+  document.getElementById('totalLeadsVal').innerText = formatNumber(data.totalLeads);
+  document.getElementById('totalLeadsSub').innerText = `FB: ${formatNumber(data.fbLeads)} · Others: ${formatNumber(data.otherLeads)}`;
+
+  document.getElementById('totalSpendVal').innerText =
+    data.totalSpend < 100000
+      ? formatCurrencyThousands(data.totalSpend)
+      : formatCurrencyLakhs(data.totalSpend);
+
+  document.getElementById('totalSpendSub').innerText =
+    `Meta ${formatCurrencyThousands(data.metaSpend)} · Google ${formatCurrencyThousands(data.googleSpend)}`;
+
+  document.getElementById('conversionsVal').innerText = formatNumber(data.totalConversions);
+  document.getElementById('conversionsSub').innerText = `Conv. rate: ${data.convRate.toFixed(2)}%`;
+
+  document.getElementById('convValueVal').innerText = formatCurrencyLakhs(data.totalConvValue);
+  document.getElementById('convValueSub').innerText = `ROAS: ${data.roas.toFixed(1)}x`;
+}
     const metaCpl = data.fbLeads > 0 ? Math.round(data.metaSpend / data.fbLeads) : 0;
     document.getElementById('metaCplVal').innerText = `₹${metaCpl}`;
     document.getElementById('metaCplSub').innerText = activeMonth === 'All Q1' ? 'Best: Feb ₹58' : `Active Month CPL`;
