@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Excel Data Validator - Syona Roots</title>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; background: #f5f5f5; padding: 20px; }
+    .container { max-width: 1200px; margin: 0 auto; }
+    .header { background: #1f4e79; color: white; padding: 24px; border-radius: 8px; margin-bottom: 24px; }
+    .header h1 { font-size: 24px; margin-bottom: 8px; }
+    .header p { font-size: 14px; opacity: 0.9; }
+    
+    .upload-section { background: white; padding: 24px; border-radius: 8px; margin-bottom: 24px; border: 2px dashed #ddd; }
+    .upload-section input { display: none; }
+    .upload-btn { background: #2E75B6; color: white; padding: 12px 24px; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; }
+    .upload-btn:hover { background: #1f4e79; }
+    .upload-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+    
+    .results { display: grid; grid-template-columns: 1fr; gap: 24px; margin-top: 24px; }
+    .result-card { background: white; padding: 24px; border-radius: 8px; }
+    .result-card h2 { font-size: 18px; margin-bottom: 16px; color: #1f4e79; }
+    
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    table th { background: #f0f0f0; padding: 10px; text-align: left; font-weight: 600; border-bottom: 1px solid #ddd; }
+    table td { padding: 10px; border-bottom: 1px solid #eee; }
+    table tr:hover { background: #f9f9f9; }
+    
+    .mismatch { background: #ffebee !important; color: #c62828; font-weight: 600; }
+    .match { background: #f1f8e9; color: #33691e; }
+    
+    .stats { background: white; padding: 24px; border-radius: 8px; margin-bottom: 24px; }
+    .stat-item { display: inline-block; margin-right: 32px; padding: 16px; background: #f5f5f5; border-radius: 6px; }
+    .stat-label { font-size: 12px; color: #666; text-transform: uppercase; }
+    .stat-value { font-size: 24px; font-weight: 700; color: #1f4e79; }
+    
+    .console { background: #1e1e1e; color: #d4d4d4; padding: 16px; border-radius: 6px; font-family: 'Courier New', monospace; font-size: 12px; max-height: 400px; overflow-y: auto; margin-top: 16px; }
+    .console-error { color: #f48771; }
+    .console-success { color: #89d185; }
+    .console-warn { color: #dcdcaa; }
+    .console-info { color: #87ceeb; }
+    
+    .validation-summary { background: white; padding: 24px; border-radius: 8px; margin-top: 24px; }
+    .validation-item { padding: 12px; margin: 8px 0; border-left: 4px solid #2E75B6; background: #f0f7ff; }
+    .validation-item.error { border-left-color: #f44336; background: #ffebee; color: #c62828; }
+    .validation-item.success { border-left-color: #4caf50; background: #e8f5e9; color: #2e7d32; }
+    
+    .section-label { font-weight: 600; color: #1f4e79; margin-top: 24px; margin-bottom: 12px; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>📊 Excel Data Validator (Updated)</h1>
+      <p>Upload your Dm_Dashboard_-_Data_s.xlsx to verify all values are read correctly</p>
+    </div>
+
+    <div class="upload-section">
+      <input type="file" id="fileInput" accept=".xlsx,.xls" />
+      <button class="upload-btn" id="uploadBtn">📁 Choose Excel File</button>
+      <p style="margin-top: 12px; font-size: 13px; color: #666;">Supported formats: .xlsx, .xls</p>
+    </div>
+
+    <div id="results" style="display: none;">
+      <!-- Stats Section -->
+      <div class="stats">
+        <div class="stat-item">
+          <div class="stat-label">Total Rows</div>
+          <div class="stat-value" id="totalRows">0</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-label">Leads Data</div>
+          <div class="stat-value" id="leadsCount">0</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-label">Issues Found</div>
+          <div class="stat-value" id="errorCount" style="color: #c62828;">0</div>
+        </div>
+      </div>
+
+      <!-- Sheet Structure Analysis -->
+      <div class="result-card">
+        <h2>📋 Sheet Structure Analysis</h2>
+        <div id="structureAnalysis" style="background: #f9f9f9; padding: 16px; border-radius: 6px; font-family: monospace; font-size: 12px;"></div>
+      </div>
+
+      <!-- Leads Data Table -->
+      <div class="result-card" id="leadsSection" style="display: none;">
+        <h2>✅ Leads Data (From Excel)</h2>
+        <table id="leadsTable">
+          <thead>
+            <tr>
+              <th>S.No</th>
+              <th>Month</th>
+              <th>Total Leads</th>
+              <th>Website</th>
+              <th>Call</th>
+              <th>WhatsApp</th>
+              <th>Facebook</th>
+            </tr>
+          </thead>
+          <tbody id="leadsBody"></tbody>
+        </table>
+      </div>
+
+      <!-- Conversion Data Table -->
+      <div class="result-card" id="conversionSection" style="display: none;">
+        <h2>✅ Conversion/Pipeline Data (From Excel)</h2>
+        <table id="conversionTable">
+          <thead>
+            <tr>
+              <th>S.No</th>
+              <th>Month</th>
+              <th>Conversions</th>
+              <th>Value</th>
+              <th>Follow Up</th>
+              <th>Quote Given</th>
+              <th>Converted</th>
+            </tr>
+          </thead>
+          <tbody id="conversionBody"></tbody>
+        </table>
+      </div>
+
+      <!-- Console Log -->
+      <div class="result-card">
+        <h2>📋 Console Output (Detailed Debug Info)</h2>
+        <div class="console" id="console"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let consoleLog = [];
+    
+    // Override console to capture output
+    const originalLog = console.log;
+    const originalWarn = console.warn;
+    const originalError = console.error;
+    const originalTable = console.table;
+    
+    function addLog(type, text) {
+      consoleLog.push({ type, text });
+      updateConsole();
+    }
+    
+    console.log = function(...args) {
+      originalLog.apply(console, args);
+      addLog('success', args.join(' '));
+    };
+    console.warn = function(...args) {
+      originalWarn.apply(console, args);
+      addLog('warn', args.join(' '));
+    };
+    console.error = function(...args) {
+      originalError.apply(console, args);
+      addLog('error', args.join(' '));
+    };
+    console.info = function(...args) {
+      addLog('info', args.join(' '));
+    };
+    
+    function updateConsole() {
+      const el = document.getElementById('console');
+      if (!el) return;
+      el.innerHTML = consoleLog.slice(-100).map(log => {
+        const className = `console-${log.type}`;
+        return `<div class="${className}">> ${log.text}</div>`;
+      }).join('\n');
+      el.scrollTop = el.scrollHeight;
+    }
+
+    // File upload
+    document.getElementById('uploadBtn').addEventListener('click', () => {
+      document.getElementById('fileInput').click();
+    });
+
+    document.getElementById('fileInput').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      
+      consoleLog = [];
+      console.log(`📁 Loading: ${file.name}`);
+      
+      try {
+        const arrayBuffer = await file.arrayBuffer();
+        const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+        
+        console.log(`📊 Available sheets: ${workbook.SheetNames.join(', ')}`);
+        
+        const sheet = workbook.Sheets["DM Leads"];
+        if (!sheet) {
+          console.error("❌ Sheet 'DM Leads' not found");
+          return;
+        }
+        
+        // Read ALL rows as raw data first
+        const allRows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+        console.log(`📈 Total rows read: ${allRows.length}`);
+        
+        // Display first 10 rows to understand structure
+        console.info("🔍 First 10 rows (raw):");
+        allRows.slice(0, 10).forEach((row, idx) => {
+          console.info(`Row ${idx}: ${JSON.stringify(row).substring(0, 100)}...`);
+        });
+        
+        // Find leads data (rows with S.No column)
+        const leadsData = [];
+        const conversionData = [];
+        
+        for (let i = 0; i < allRows.length; i++) {
+          const row = allRows[i];
+          
+          // Check if this is a leads row
+          if ((row['S.No'] || row['s.no'] || row['SNO']) && 
+              (row['TotaL Leads'] || row['Total Leads'] || row['total leads'])) {
+            
+            // Skip header and total rows
+            if (row['S.No'] === 'S.No' || row['S.No'] === 'Total') continue;
+            
+            const monthSerial = row['Month'];
+            let month = parseMonth(monthSerial);
+            
+            const leads = {
+              sno: row['S.No'],
+              month,
+              totalLeads: parseInt(row['TotaL Leads'] || row['Total Leads'] || 0) || 0,
+              website: parseInt(row['Website'] || 0) || 0,
+              call: parseInt(row['Call'] || 0) || 0,
+              whatsapp: parseInt(row['Whatsapp'] || row['WhatsApp'] || 0) || 0,
+              facebook: parseInt(row['Facebook'] || 0) || 0
+            };
+            
+            leadsData.push(leads);
+            console.info(`✓ Found leads row: ${month} (${leads.totalLeads} leads)`);
+          }
+          
+          // Check if this is a conversion row
+          if ((row['S.No'] || row['s.no']) && 
+              (row['Conversion'] !== undefined) && 
+              typeof row['Conversion'] === 'number') {
+            
+            if (row['S.No'] === 'S.No' || row['S.No'] === 'Total') continue;
+            
+            const monthSerial = row['Month'];
+            let month = parseMonth(monthSerial);
+            
+            const conversion = {
+              sno: row['S.No'],
+              month,
+              conversions: parseInt(row['Conversion'] || 0) || 0,
+              value: parseFloat(row['Conversion Value'] || 0) || 0,
+              followUp: parseInt(row['Follow Up'] || 0) || 0,
+              quoteGiven: parseInt(row['Quote Given'] || 0) || 0,
+              converted: parseInt(row['Converted'] || 0) || 0
+            };
+            
+            conversionData.push(conversion);
+            console.info(`✓ Found conversion row: ${month} (${conversion.conversions} conversions)`);
+          }
+        }
+        
+        console.log(`✓ Parsed ${leadsData.length} leads rows`);
+        console.log(`✓ Parsed ${conversionData.length} conversion rows`);
+        
+        // Display results
+        displayResults(allRows, leadsData, conversionData);
+        document.getElementById('results').style.display = 'block';
+        
+      } catch (err) {
+        console.error(`❌ Error: ${err.message}`);
+        console.error(err.stack);
+      }
+    });
+
+    function parseMonth(value) {
+      if (typeof value === 'number') {
+        try {
+          const excelEpoch = new Date(1900, 0, 1);
+          const jsDate = new Date(excelEpoch.getTime() + (value - 1) * 24 * 60 * 60 * 1000);
+          const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+          return months[jsDate.getMonth()];
+        } catch (e) {
+          return `Serial: ${value}`;
+        }
+      }
+      return String(value).trim();
+    }
+
+    function displayResults(allRows, leadsData, conversionData) {
+      // Stats
+      document.getElementById('totalRows').innerText = allRows.length;
+      document.getElementById('leadsCount').innerText = leadsData.length;
+      
+      // Structure Analysis
+      const structEl = document.getElementById('structureAnalysis');
+      let structHTML = '<strong>Column Headers Found:</strong><br>';
+      if (allRows.length > 0) {
+        const headers = Object.keys(allRows[0]);
+        structHTML += headers.map(h => `<code>${h}</code>`).join(', ');
+      }
+      structEl.innerHTML = structHTML;
+      
+      // Leads Table
+      if (leadsData.length > 0) {
+        document.getElementById('leadsSection').style.display = 'block';
+        const leadsBody = document.getElementById('leadsBody');
+        leadsBody.innerHTML = leadsData.map(row => `
+          <tr>
+            <td>${row.sno}</td>
+            <td>${row.month}</td>
+            <td>${row.totalLeads}</td>
+            <td>${row.website}</td>
+            <td>${row.call}</td>
+            <td>${row.whatsapp}</td>
+            <td>${row.facebook}</td>
+          </tr>
+        `).join('');
+      }
+      
+      // Conversion Table
+      if (conversionData.length > 0) {
+        document.getElementById('conversionSection').style.display = 'block';
+        const conversionBody = document.getElementById('conversionBody');
+        conversionBody.innerHTML = conversionData.map(row => `
+          <tr>
+            <td>${row.sno}</td>
+            <td>${row.month}</td>
+            <td>${row.conversions}</td>
+            <td>₹${(row.value / 100000).toFixed(1)}L</td>
+            <td>${row.followUp}</td>
+            <td>${row.quoteGiven}</td>
+            <td>${row.converted}</td>
+          </tr>
+        `).join('');
+      }
+      
+      if (leadsData.length === 0 && conversionData.length === 0) {
+        console.warn("⚠️  No data tables found. Check console output above to debug.");
+      }
+    }
+  </script>
+</body>
+</html>
