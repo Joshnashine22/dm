@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Excel Data Validator - Fixed</title>
+  <title>Excel Data Validator - Smart Parser</title>
   <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -11,7 +11,6 @@
     .container { max-width: 1200px; margin: 0 auto; }
     .header { background: #1f4e79; color: white; padding: 24px; border-radius: 8px; margin-bottom: 24px; }
     .header h1 { font-size: 24px; margin-bottom: 8px; }
-    .header p { font-size: 14px; opacity: 0.9; }
     .upload-section { background: white; padding: 24px; border-radius: 8px; margin-bottom: 24px; border: 2px dashed #ddd; }
     .upload-section input { display: none; }
     .upload-btn { background: #2E75B6; color: white; padding: 12px 24px; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; }
@@ -22,22 +21,24 @@
     table th { background: #f0f0f0; padding: 10px; text-align: left; font-weight: 600; border-bottom: 1px solid #ddd; }
     table td { padding: 10px; border-bottom: 1px solid #eee; }
     table tr:hover { background: #f9f9f9; }
-    .console { background: #1e1e1e; color: #d4d4d4; padding: 16px; border-radius: 6px; font-family: 'Courier New', monospace; font-size: 12px; max-height: 400px; overflow-y: auto; margin-top: 16px; }
+    .console { background: #1e1e1e; color: #d4d4d4; padding: 16px; border-radius: 6px; font-family: 'Courier New', monospace; font-size: 12px; max-height: 400px; overflow-y: auto; }
     .console-error { color: #f48771; }
     .console-success { color: #89d185; }
     .console-warn { color: #dcdcaa; }
     .console-info { color: #87ceeb; }
     .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
-    .stat { background: white; padding: 16px; border-radius: 8px; text-align: center; }
+    .stat { background: white; padding: 16px; border-radius: 8px; text-align: center; border: 2px solid #f0f0f0; }
     .stat-label { font-size: 12px; color: #666; text-transform: uppercase; }
-    .stat-value { font-size: 32px; font-weight: 700; color: #1f4e79; margin-top: 8px; }
+    .stat-value { font-size: 28px; font-weight: 700; color: #1f4e79; margin-top: 8px; }
+    .stat.success { border-color: #4caf50; background: #f1f8e9; }
+    .stat.error { border-color: #f44336; background: #ffebee; }
   </style>
 </head>
 <body>
   <div class="container">
     <div class="header">
-      <h1>📊 Excel Data Validator</h1>
-      <p>Upload your Excel to extract and verify leads & conversion data</p>
+      <h1>📊 Smart Excel Validator</h1>
+      <p>Properly separates leads and conversion tables</p>
     </div>
 
     <div class="upload-section">
@@ -47,26 +48,27 @@
 
     <div id="results" style="display: none;">
       <div class="stats">
+        <div class="stat success" id="leadsCard">
+          <div class="stat-label">✓ Leads Rows</div>
+          <div class="stat-value" id="leadsCount">0</div>
+        </div>
+        <div class="stat success" id="convCard">
+          <div class="stat-label">✓ Conversion Rows</div>
+          <div class="stat-value" id="convCount">0</div>
+        </div>
+        <div class="stat" id="statusCard">
+          <div class="stat-label">Status</div>
+          <div class="stat-value" id="status">?</div>
+        </div>
         <div class="stat">
           <div class="stat-label">Total Rows</div>
           <div class="stat-value" id="totalRows">0</div>
         </div>
-        <div class="stat">
-          <div class="stat-label">Leads Found</div>
-          <div class="stat-value" id="leadsCount">0</div>
-        </div>
-        <div class="stat">
-          <div class="stat-label">Conversions Found</div>
-          <div class="stat-value" id="convCount">0</div>
-        </div>
-        <div class="stat">
-          <div class="stat-label">Status</div>
-          <div class="stat-value" id="status" style="color: #4caf50;">✓</div>
-        </div>
       </div>
 
       <div class="result-card">
-        <h2>✅ Leads Data</h2>
+        <h2>✅ Leads Data (Table 1)</h2>
+        <p style="color: #666; font-size: 12px; margin-bottom: 12px;">Columns: S.No, Month, TotaL Leads, Website, Call, Whatsapp, Facebook</p>
         <table id="leadsTable">
           <thead>
             <tr>
@@ -84,14 +86,15 @@
       </div>
 
       <div class="result-card">
-        <h2>✅ Conversion Data</h2>
+        <h2>✅ Conversion Data (Table 2)</h2>
+        <p style="color: #666; font-size: 12px; margin-bottom: 12px;">Columns: S.No, Month, Conversions, Value, Follow Up, Quote Given, Converted</p>
         <table id="convTable">
           <thead>
             <tr>
               <th>S.No</th>
               <th>Month</th>
               <th>Conversions</th>
-              <th>Value</th>
+              <th>Value (₹)</th>
               <th>Follow Up</th>
               <th>Quote Given</th>
               <th>Converted</th>
@@ -102,29 +105,29 @@
       </div>
 
       <div class="result-card">
-        <h2>📋 Console Output</h2>
+        <h2>📋 Debug Console</h2>
         <div class="console" id="console"></div>
       </div>
     </div>
   </div>
 
   <script>
-    let consoleLog = [];
+    let logs = [];
     
-    function log(type, text) {
-      consoleLog.push({ type, text });
+    function addLog(type, msg) {
+      logs.push({ type, msg });
       const el = document.getElementById('console');
       if (el) {
-        const className = `console-${type}`;
-        el.innerHTML += `<div class="${className}">> ${text}</div>\n`;
+        const cls = `console-${type}`;
+        el.innerHTML += `<div class="${cls}">> ${msg}</div>`;
         el.scrollTop = el.scrollHeight;
       }
     }
 
-    console.log = function(...args) { log('success', args.join(' ')); };
-    console.warn = function(...args) { log('warn', args.join(' ')); };
-    console.error = function(...args) { log('error', args.join(' ')); };
-    console.info = function(...args) { log('info', args.join(' ')); };
+    console.log = (...args) => addLog('success', args.join(' '));
+    console.warn = (...args) => addLog('warn', args.join(' '));
+    console.error = (...args) => addLog('error', args.join(' '));
+    console.info = (...args) => addLog('info', args.join(' '));
 
     function parseMonth(serial) {
       if (typeof serial === 'number' && serial > 0) {
@@ -148,7 +151,7 @@
       const file = e.target.files[0];
       if (!file) return;
       
-      consoleLog = [];
+      logs = [];
       document.getElementById('console').innerHTML = '';
       
       console.log(`📁 Loading: ${file.name}`);
@@ -157,112 +160,129 @@
         const arrayBuffer = await file.arrayBuffer();
         const workbook = XLSX.read(arrayBuffer, { type: 'array' });
         
-        console.info(`📊 Sheets found: ${workbook.SheetNames.join(', ')}`);
-        
         const sheet = workbook.Sheets["DM Leads"];
         if (!sheet) {
           console.error("❌ Sheet 'DM Leads' not found");
           return;
         }
         
-        // Read raw data to handle offset columns
+        // Read all rows
         const allRows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
-        console.log(`✓ Read ${allRows.length} rows total`);
+        console.log(`✓ Read ${allRows.length} rows from sheet`);
         
-        // Detect if there's an empty first column
+        // Convert to array format to handle offset
+        const rowsAsArrays = allRows.map((row, idx) => Object.values(row));
+        
+        // Detect offset
         let colOffset = 0;
-        if (allRows.length > 0 && allRows[0]['__EMPTY'] !== undefined) {
+        if (rowsAsArrays[0] && rowsAsArrays[0][0] === '') {
           colOffset = 1;
-          console.warn(`⚠️ Empty column detected - offsetting by 1`);
+          console.warn(`⚠️ Empty first column detected - using offset`);
         }
         
-        // Column names by position (accounting for offset)
-        const getColName = (baseCol) => {
-          const emptyPrefix = '__EMPTY';
-          if (colOffset === 0) return baseCol;
-          return emptyPrefix + (baseCol ? '_' + (baseCol) : '_1');
-        };
+        // ===== IDENTIFY TABLE BOUNDARIES =====
+        console.info(`🔍 Scanning for table sections...`);
         
-        const leadsData = [];
-        const conversionData = [];
+        const leadsHeaderIdx = -1;
+        const conversionHeaderIdx = -1;
+        let leadsStart = -1, leadsEnd = -1;
+        let convStart = -1, convEnd = -1;
         
-        console.info(`🔍 Parsing rows...`);
-        
-        for (let i = 0; i < allRows.length; i++) {
-          const row = allRows[i];
+        // Find header rows
+        for (let i = 0; i < rowsAsArrays.length; i++) {
+          const row = rowsAsArrays[i];
+          const col1 = row[colOffset];
+          const col2 = row[colOffset + 1];
+          const col3 = row[colOffset + 2];
           
-          // Access by position accounting for offset
-          const cols = Object.values(row);
-          if (cols.length < 2) continue; // Need at least some data
+          // Check for "S.No" and "TotaL Leads" = Leads table
+          if (col1 === 'S.No' && row.includes('TotaL Leads')) {
+            console.info(`✓ Found Leads header at row ${i}`);
+            leadsStart = i + 1; // Data starts after header
+          }
           
-          // With offset, actual data starts at index 1
-          const snoVal = colOffset === 1 ? cols[1] : cols[0];
-          const monthVal = colOffset === 1 ? cols[2] : cols[1];
-          const leadsVal = colOffset === 1 ? cols[3] : cols[2];
-          
-          // Skip headers and totals
-          if (snoVal === 'S.No' || snoVal === 'Total' || snoVal === '') continue;
-          
-          // Check if this is a leads row (should have numeric S.No and leads total)
-          if (!isNaN(snoVal) && !isNaN(leadsVal) && snoVal !== '') {
-            
-            // Determine if leads or conversion row by checking column count
-            // Leads row has: S.No, Month, TotaL Leads, Website, Call, Whatsapp, Mail, Toll-Free, E-commerce, Facebook (10 cols)
-            // Conversion row has: S.No, Month, Conversion, Value, FollowUp, QuoteGiven, Converted, QuoteLive, QuoteLost, SaleLost, NoResponse, ColdEnquiry
-            
-            if (cols.length >= 10) {
-              // Likely a leads row
-              const leads = {
-                sno: snoVal,
-                month: parseMonth(monthVal),
-                totalLeads: parseInt(leadsVal) || 0,
-                website: parseInt(cols[colOffset + 3]) || 0,
-                call: parseInt(cols[colOffset + 4]) || 0,
-                whatsapp: parseInt(cols[colOffset + 5]) || 0,
-                facebook: parseInt(cols[colOffset + 8]) || 0
-              };
-              
-              leadsData.push(leads);
-              console.info(`✓ Leads: ${leads.month} - ${leads.totalLeads} total`);
-            }
+          // Check for "S.No" and "Conversion" = Conversion table  
+          if (col1 === 'S.No' && row.includes('Conversion')) {
+            console.info(`✓ Found Conversion header at row ${i}`);
+            convStart = i + 1;
           }
         }
         
-        // Parse conversion data (it's in a separate table section)
-        for (let i = 0; i < allRows.length; i++) {
-          const row = allRows[i];
-          const cols = Object.values(row);
-          if (cols.length < 2) continue;
+        // ===== EXTRACT LEADS DATA =====
+        const leadsData = [];
+        if (leadsStart > 0) {
+          console.info(`📊 Extracting leads data from row ${leadsStart}...`);
           
-          const snoVal = colOffset === 1 ? cols[1] : cols[0];
-          const monthVal = colOffset === 1 ? cols[2] : cols[1];
-          const convVal = colOffset === 1 ? cols[3] : cols[2];
-          
-          if (snoVal === 'S.No' || snoVal === 'Total' || snoVal === '') continue;
-          
-          // Conversion rows have: S.No, Month, Conversion, Value, FollowUp...
-          if (!isNaN(snoVal) && !isNaN(convVal) && snoVal !== '' && cols.length >= 12) {
-            // This is likely a conversion row
-            const conv = {
-              sno: snoVal,
-              month: parseMonth(monthVal),
-              conversions: parseInt(convVal) || 0,
-              value: parseFloat(cols[colOffset + 3]) || 0,
-              followUp: parseInt(cols[colOffset + 4]) || 0,
-              quoteGiven: parseInt(cols[colOffset + 5]) || 0,
-              converted: parseInt(cols[colOffset + 6]) || 0
+          for (let i = leadsStart; i < rowsAsArrays.length; i++) {
+            const row = rowsAsArrays[i];
+            if (!row || row.length < colOffset + 2) continue;
+            
+            const sno = row[colOffset];
+            const month = row[colOffset + 1];
+            
+            // Stop at total row or header row
+            if (sno === 'Total' || sno === 'S.No' || sno === '' || sno === undefined) break;
+            
+            // Stop if we hit the next section (Conversion header)
+            if (row.includes('Conversion') && row.includes('Follow Up')) {
+              convStart = i;
+              console.info(`📊 Conversion section starts at row ${i}`);
+              break;
+            }
+            
+            // Skip if not numeric S.No
+            if (isNaN(sno)) continue;
+            
+            const leads = {
+              sno: sno,
+              month: parseMonth(month),
+              total: parseInt(row[colOffset + 2]) || 0,
+              website: parseInt(row[colOffset + 3]) || 0,
+              call: parseInt(row[colOffset + 4]) || 0,
+              whatsapp: parseInt(row[colOffset + 5]) || 0,
+              facebook: parseInt(row[colOffset + 8]) || 0
             };
             
-            // Avoid duplicates
-            if (!conversionData.find(c => c.sno === conv.sno)) {
-              conversionData.push(conv);
-              console.info(`✓ Conversion: ${conv.month} - ${conv.conversions} conversions`);
-            }
+            leadsData.push(leads);
+            console.info(`  • ${leads.month}: ${leads.total} leads`);
           }
         }
         
-        console.log(`✓ Found ${leadsData.length} leads rows`);
-        console.log(`✓ Found ${conversionData.length} conversion rows`);
+        // ===== EXTRACT CONVERSION DATA =====
+        const conversionData = [];
+        if (convStart > 0) {
+          console.info(`📊 Extracting conversion data from row ${convStart}...`);
+          
+          for (let i = convStart; i < rowsAsArrays.length; i++) {
+            const row = rowsAsArrays[i];
+            if (!row || row.length < colOffset + 2) continue;
+            
+            const sno = row[colOffset];
+            const month = row[colOffset + 1];
+            
+            // Stop at total row or header
+            if (sno === 'Total' || sno === 'S.No' || sno === '' || sno === undefined) break;
+            
+            // Skip if not numeric
+            if (isNaN(sno)) continue;
+            
+            const conv = {
+              sno: sno,
+              month: parseMonth(month),
+              conversions: parseInt(row[colOffset + 2]) || 0,
+              value: parseFloat(row[colOffset + 3]) || 0,
+              followUp: parseInt(row[colOffset + 4]) || 0,
+              quoteGiven: parseInt(row[colOffset + 5]) || 0,
+              converted: parseInt(row[colOffset + 6]) || 0
+            };
+            
+            conversionData.push(conv);
+            console.info(`  • ${conv.month}: ${conv.conversions} conversions, ₹${(conv.value/100000).toFixed(2)}L`);
+          }
+        }
+        
+        console.log(`✓ Extracted ${leadsData.length} leads rows`);
+        console.log(`✓ Extracted ${conversionData.length} conversion rows`);
         
         displayResults(allRows.length, leadsData, conversionData);
         
@@ -277,20 +297,16 @@
       document.getElementById('leadsCount').innerText = leadsData.length;
       document.getElementById('convCount').innerText = conversionData.length;
       
-      if (leadsData.length > 0 && conversionData.length > 0) {
-        document.getElementById('status').innerText = '✓';
-        document.getElementById('status').style.color = '#4caf50';
-      } else {
-        document.getElementById('status').innerText = '⚠';
-        document.getElementById('status').style.color = '#ff9800';
-      }
+      const allCorrect = leadsData.length === 3 && conversionData.length === 3;
+      document.getElementById('status').innerText = allCorrect ? '✓' : '⚠';
+      document.getElementById('statusCard').className = allCorrect ? 'stat success' : 'stat error';
       
       // Leads table
       document.getElementById('leadsBody').innerHTML = leadsData.map(row => `
         <tr>
           <td>${row.sno}</td>
           <td>${row.month}</td>
-          <td>${row.totalLeads}</td>
+          <td>${row.total}</td>
           <td>${row.website}</td>
           <td>${row.call}</td>
           <td>${row.whatsapp}</td>
@@ -304,7 +320,7 @@
           <td>${row.sno}</td>
           <td>${row.month}</td>
           <td>${row.conversions}</td>
-          <td>₹${(row.value / 100000).toFixed(1)}L</td>
+          <td>₹${(row.value / 100000).toFixed(2)}L</td>
           <td>${row.followUp}</td>
           <td>${row.quoteGiven}</td>
           <td>${row.converted}</td>
