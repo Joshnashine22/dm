@@ -1,0 +1,833 @@
+import { useState, useEffect, useRef, useCallback } from "react";
+
+// ─── XLSX loaded from CDN via script tag injected on mount ───────────────────
+const XLSX_CDN = "https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js";
+const CHART_CDN = "https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js";
+
+const MONTHLY_TARGET = 5000000;
+const MONTH_ORDER = ["January","February","March","April","May","June",
+                     "July","August","September","October","November","December"];
+
+// ─── STORAGE KEYS ────────────────────────────────────────────────────────────
+const STORAGE_KEY = "syona-dm-history-v2";
+
+// ─── HELPERS ─────────────────────────────────────────────────────────────────
+function serialToMonth(v) {
+  if (typeof v === "number" && v > 40000) {
+    const d = new Date(Math.round((v - 25569) * 86400000));
+    return MONTH_ORDER[d.getUTCMonth()] || "";
+  }
+  const s = String(v || "").trim();
+  return MONTH_ORDER.find(m => m.toLowerCase().startsWith(s.toLowerCase().substring(0,3))) || s;
+}
+function num(v) { return parseFloat(v) || 0; }
+function int(v) { return Math.round(parseFloat(v) || 0); }
+function fmtL(v) { return v >= 10000000 ? `₹${(v/10000000).toFixed(2)}Cr` : `₹${(v/100000).toFixed(2)}L`; }
+function fmtK(v) { return `₹${(v/1000).toFixed(1)}K`; }
+function fmtN(v) { return Number(v).toLocaleString("en-IN"); }
+function fmtINR(v) { return `₹${Math.round(v).toLocaleString("en-IN")}`; }
+
+const COLORS = ["#2563eb","#10b981","#f59e0b","#f43f5e","#6366f1","#06b6d4","#84cc16","#ec4899","#8b5cf6","#0ea5e9","#f97316","#a3e635"];
+
+// ─── EXCEL PARSER ────────────────────────────────────────────────────────────
+function parseWorkbook(wb) {
+  const result = {}; // keyed by "YYYY-MonthName"
+
+  const dmSheet = wb.Sheets["DM Leads"];
+  const bkSheet = wb.Sheets["Leads Breakup"];
+  const gaSheet = wb.Sheets["Google Ads"] || wb.Sheets["DM Leads"];
+  const metaSheet = wb.Sheets["Meta"];
+
+  // ── DM Leads ──
+  const dmRows = dmSheet ? XLSX.utils.sheet_to_json(dmSheet, { header:1, defval:"" }) : [];
+  let leadsHdr=-1, pipeHdr=-1, seoHdr=-1;
+  dmRows.forEach((r,i) => {
+    const s = r.map(String);
+    if (s.some(c=>c.includes("TotaL Leads")||c.includes("Total Leads"))) leadsHdr=i;
+    if (s.some(c=>c.includes("Conversion"))&&s.some(c=>c.includes("Follow"))) pipeHdr=i;
+    if (s.some(c=>c==="Clicks")&&s.some(c=>c.includes("Impr"))) seoHdr=i;
+  });
+
+  // Detect year from workbook (look for 4-digit year in sheet names or data)
+  let detectedYear = new Date().getFullYear();
+  wb.SheetNames.forEach(name => { const m=name.match(/20\d\d/); if(m) detectedYear=parseInt(m[0]); });
+  // Also scan first few rows
+  dmRows.slice(0,5).forEach(r => r.forEach(v => { const m=String(v).match(/20\d\d/); if(m) detectedYear=parseInt(m[0]); }));
+
+  const ensure = (year, month) => {
+    const key = `${year}-${month}`;
+    if (!result[key]) result[key] = {
+      year, month, key,
+      leads: null, pipeline: null, seo: null,
+      googleCampaigns: [], googleSpend: 0,
+      meta: null, models: {}, customerTypes: {}, regions: {}, cities: [], channelConv: null
+    };
+    return result[key];
+  };
+
+  // Leads rows
+  if (leadsHdr >= 0) {
+    const h = dmRows[leadsHdr].map(String);
+    const ci = (fn) => h.findIndex(fn);
+    const iSno=ci(c=>c==="S.No"||c.includes("S.No")), iMonth=ci(c=>c.toLowerCase().includes("month"));
+    const iTotal=ci(c=>c.toLowerCase().includes("total")||c.toLowerCase().includes("leads"));
+    const iWeb=ci(c=>c.toLowerCase().includes("website")), iCall=ci(c=>c.toLowerCase().includes("call"));
+    const iWA=ci(c=>c.toLowerCase().includes("whatsapp")), iMail=ci(c=>c.toLowerCase().includes("mail"));
+    const iTF=ci(c=>c.toLowerCase().includes("toll")), iEcom=ci(c=>c.toLowerCase().includes("ecom"));
+    const iFB=ci(c=>c.toLowerCase().includes("facebook"));
+    for (let i=leadsHdr+1; i<dmRows.length; i++) {
+      const r=dmRows[i]; const sno=r[iSno];
+      if (!sno||sno==="Total"||String(sno).toLowerCase()==="s.no") break;
+      if (isNaN(sno)) continue;
+      const month=serialToMonth(r[iMonth]); if(!month) continue;
+      ensure(detectedYear, month).leads = {
+        total:int(r[iTotal]), website:int(r[iWeb]), call:int(r[iCall]), whatsapp:int(r[iWA]),
+        mail:int(r[iMail]), tollFree:int(r[iTF]), ecommerce:int(r[iEcom]), facebook:int(r[iFB])
+      };
+    }
+  }
+
+  // Pipeline rows
+  if (pipeHdr >= 0) {
+    const h = dmRows[pipeHdr].map(String);
+    const ci = (fn) => h.findIndex(fn);
+    const iSno=ci(c=>c==="S.No"||c.includes("S.No")), iMonth=ci(c=>c.toLowerCase().includes("month"));
+    const iConv=ci(c=>c.toLowerCase().includes("conversion")&&!c.toLowerCase().includes("value"));
+    const iVal=ci(c=>c.toLowerCase().includes("value"));
+    const iFU=ci(c=>c.toLowerCase().includes("follow"));
+    const iQG=ci(c=>c.toLowerCase().includes("quote")&&c.toLowerCase().includes("given"));
+    const iConvd=ci(c=>c.toLowerCase()==="converted");
+    const iQL=ci(c=>c.toLowerCase().includes("quote")&&c.toLowerCase().includes("live"));
+    const iQLost=ci(c=>c.toLowerCase().includes("quote")&&c.toLowerCase().includes("lost"));
+    const iSL=ci(c=>c.toLowerCase().includes("sale")&&c.toLowerCase().includes("lost"));
+    const iNR=ci(c=>c.toLowerCase().includes("no")&&c.toLowerCase().includes("resp"));
+    const iCE=ci(c=>c.toLowerCase().includes("cold"));
+    for (let i=pipeHdr+1; i<dmRows.length; i++) {
+      const r=dmRows[i]; const sno=r[iSno];
+      if (!sno||sno==="Total"||String(sno).toLowerCase()==="s.no") break;
+      if (isNaN(sno)) continue;
+      const month=serialToMonth(r[iMonth]); if(!month) continue;
+      ensure(detectedYear, month).pipeline = {
+        conversions:int(r[iConv]), value:num(r[iVal]),
+        followUp:int(r[iFU]), quoteGiven:int(r[iQG]), converted:int(r[iConvd]),
+        quoteLive:int(r[iQL]), quoteLost:int(r[iQLost]), saleLost:int(r[iSL]),
+        noResponse:int(r[iNR]), coldEnquiry:int(r[iCE])
+      };
+    }
+  }
+
+  // SEO rows (text month names, not serials)
+  if (seoHdr >= 0) {
+    const h=dmRows[seoHdr].map(String);
+    const iM=h.findIndex(c=>c.toLowerCase().includes("month"));
+    const iC=h.findIndex(c=>c.toLowerCase()==="clicks");
+    const iI=h.findIndex(c=>c.toLowerCase().includes("impr"));
+    const iCTR=h.findIndex(c=>c.toLowerCase()==="ctr");
+    const iPos=h.findIndex(c=>c.toLowerCase().includes("pos"));
+    const parseK=v=>{ const s=String(v||""); return (s.includes("k")||s.includes("K"))?parseFloat(s)*1000:parseFloat(s)||0; };
+    for (let i=seoHdr+1; i<dmRows.length; i++) {
+      const r=dmRows[i]; const mRaw=r[iM]; if(!mRaw||typeof mRaw==="number") break;
+      const month=String(mRaw).trim(); if(!month) break;
+      ensure(detectedYear, month).seo = {
+        clicks:Math.round(parseK(r[iC])), impressions:Math.round(parseK(r[iI])),
+        ctr:num(r[iCTR])*100, position:num(r[iPos])
+      };
+    }
+  }
+
+  // ── Leads Breakup ──
+  if (bkSheet) {
+    const rows = XLSX.utils.sheet_to_json(bkSheet, { header:1, defval:"" });
+    let modelStart=-1, custStart=-1, regionStart=-1, cityStart=-1, convSalesStart=-1;
+    rows.forEach((r,i) => {
+      const s=r.map(v=>String(v).trim());
+      if (s.some(c=>c.includes("Model")||c.includes("model"))&&s.filter(c=>c!=="").length>=2&&modelStart<0) modelStart=i;
+      if ((s.includes("Healthcare")||s.some(c=>c.includes("Customer Type")))&&custStart<0) custStart=i;
+      if ((s[0]==="Region"||s.includes("Region"))&&regionStart<0) regionStart=i;
+      if (s.some(c=>c.includes("Location"))&&s.some(c=>c.includes("State"))&&cityStart<0) cityStart=i;
+      if (s.some(c=>c.includes("Leads Converted"))&&convSalesStart<0) convSalesStart=i;
+    });
+
+    const getMonthCols = (hdr) => hdr.map((v,idx)=>({v,idx})).filter(x=>typeof x.v==="number"&&x.v>40000);
+
+    const parseSection = (startRow, stopFn) => {
+      const hdr=rows[startRow]; const mCols=getMonthCols(hdr);
+      const out=[]; const nameCol=hdr.findIndex((_,i)=>{ const v=String(rows[startRow+1]?.[i]||"").trim(); return v.length>1; });
+      for (let i=startRow+1; i<rows.length; i++) {
+        const r=rows[i]; const name=String(r[nameCol]||r[0]||"").trim();
+        if (!name||stopFn(name)) break;
+        const byMonth={};
+        mCols.forEach(mc=>{ byMonth[serialToMonth(mc.v)]=int(r[mc.idx]); });
+        out.push({name,byMonth});
+      }
+      return {items:out, mCols};
+    };
+
+    // Models
+    if (modelStart>=0) {
+      const {items,mCols}=parseSection(modelStart, n=>n.toLowerCase().includes("region")||n.toLowerCase().includes("customer"));
+      items.forEach(item => {
+        mCols.forEach(mc => {
+          const month=serialToMonth(mc.v);
+          if(month) {
+            const rec=ensure(detectedYear,month);
+            rec.models[item.name]=(rec.models[item.name]||0)+int(item.byMonth[month]||0);
+          }
+        });
+      });
+    }
+
+    // Customer types
+    if (custStart>=0) {
+      const hdr=rows[custStart]; const mCols=getMonthCols(hdr);
+      const nameIdx=hdr.findIndex((v,i)=>String(v).toLowerCase().includes("type")||i===1);
+      for (let i=custStart+1; i<rows.length; i++) {
+        const r=rows[i]; const name=String(r[nameIdx]||r[0]||"").trim();
+        if(!name||name.toLowerCase().includes("region")) break;
+        mCols.forEach(mc=>{
+          const month=serialToMonth(mc.v);
+          if(month){
+            const rec=ensure(detectedYear,month);
+            rec.customerTypes[name]=(rec.customerTypes[name]||0)+int(r[mc.idx]||0);
+          }
+        });
+      }
+    }
+
+    // Regions
+    if (regionStart>=0) {
+      const hdr=rows[regionStart]; const mCols=getMonthCols(hdr);
+      for (let i=regionStart+1; i<rows.length; i++) {
+        const r=rows[i]; const name=String(r[0]||"").trim();
+        if(!name||name.toLowerCase().includes("conversion")) break;
+        mCols.forEach(mc=>{
+          const month=serialToMonth(mc.v);
+          if(month){
+            const rec=ensure(detectedYear,month);
+            rec.regions[name]=(rec.regions[name]||0)+int(r[mc.idx]||0);
+          }
+        });
+      }
+    }
+
+    // Cities
+    if (cityStart>=0) {
+      let curMonth="";
+      for (let i=cityStart+1; i<rows.length; i++) {
+        const r=rows[i];
+        if(typeof r[0]==="number"&&r[0]>40000){ curMonth=serialToMonth(r[0]); continue; }
+        const city=String(r[1]||"").trim(), state=String(r[2]||"").trim();
+        if(city&&state&&num(r[3])>0&&curMonth){
+          ensure(detectedYear,curMonth).cities.push({city,state,value:num(r[3])});
+        }
+      }
+    }
+
+    // Channel conversions
+    if (convSalesStart>=0) {
+      for (let i=convSalesStart+1; i<rows.length; i++) {
+        const r=rows[i];
+        const month=String(r[1]||"").trim();
+        if(!MONTH_ORDER.includes(month)) continue;
+        ensure(detectedYear,month).channelConv={
+          converted:int(r[2]),website:int(r[3]),call:int(r[4]),
+          facebook:int(r[5]),whatsapp:int(r[6]),ecommerce:int(r[10])
+        };
+      }
+    }
+  }
+
+  // ── Google Ads ──
+  const gaRows = gaSheet ? XLSX.utils.sheet_to_json(gaSheet,{header:1,defval:""}) : [];
+  let curGAMonth="";
+  const monthNames={jan:"January",feb:"February",mar:"March",apr:"April",may:"May",jun:"June",
+    jul:"July",aug:"August",sep:"September",oct:"October",nov:"November",dec:"December"};
+  gaRows.forEach(r => {
+    const r0=String(r[0]||"").trim(), r1=String(r[1]||"").trim();
+    const matchStr = r0||r1;
+    const mm=matchStr.match(/^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i);
+    if(mm){ curGAMonth=monthNames[mm[1].toLowerCase()]; return; }
+    const rLow=r.map(v=>String(v).toLowerCase());
+    if(rLow.includes("campaign")&&rLow.some(c=>c.includes("interaction"))) return;
+    if(r0.toLowerCase().includes("total")&&curGAMonth){
+      const spend=num(r[1])||num(r[2]);
+      if(spend>0) ensure(detectedYear,curGAMonth).googleSpend=spend;
+      return;
+    }
+    if(curGAMonth&&r[0]&&!String(r[0]).toLowerCase().includes("campaign")){
+      const name=String(r[0]).trim(), inter=int(r[1]), cpc_raw=num(r[3]), cost=num(r[4]), conv=int(r[6]);
+      if(!name||(!cost&&!inter)) return;
+      const cpc=inter>0?cost/inter:0, ctr=num(r[2])*100;
+      let rating="Review";
+      if(conv>30) rating="Top"; else if(conv>10) rating="Strong";
+      else if(cpc<2&&conv>0) rating="Efficient"; else if(cost>3000&&conv===0) rating="Low ROI";
+      else if(conv===0) rating="No conv.";
+      ensure(detectedYear,curGAMonth).googleCampaigns.push({name,interactions:inter,ctr,cpc,spend:cost,conv,rating});
+    }
+  });
+
+  // ── Meta ──
+  if (metaSheet) {
+    const rows = XLSX.utils.sheet_to_json(metaSheet,{header:1,defval:""});
+    for (let i=0; i<rows.length; i++) {
+      const r0=String(rows[i][0]||"").trim().toLowerCase();
+      if(r0.includes("amount")&&r0.includes("spend")){
+        const hdr=rows[i-1]||[];
+        const mCols=hdr.map((v,idx)=>({v:String(v).trim(),idx}))
+          .filter(x=>Object.keys(monthNames).some(m=>x.v.toLowerCase().startsWith(m)));
+        const spendRow=rows[i];
+        const imprRow=rows.slice(i).find(r=>String(r[0]).toLowerCase().includes("impr"));
+        const cplRow=rows.slice(i).find(r=>String(r[0]).toLowerCase()==="cpl");
+        // Build leads map from sub-table
+        const leadsMap={};
+        for(let j=0;j<rows.length;j++){
+          const lr=rows[j];
+          if(String(lr[0]||"").toLowerCase().includes("month")&&String(lr[1]||"").toLowerCase().includes("leads")){
+            for(let k=j+1;k<rows.length;k++){
+              const dr=rows[k]; if(!dr[0]) continue;
+              const m=serialToMonth(dr[0]); if(m) leadsMap[m]=int(dr[1]);
+            }
+            break;
+          }
+        }
+        mCols.forEach(mc=>{
+          const mFull=MONTH_ORDER.find(m=>m.toLowerCase().startsWith(mc.v.toLowerCase().substring(0,3)))||mc.v;
+          const spend=num(spendRow[mc.idx]); if(!spend) return;
+          const leads=leadsMap[mFull]||0;
+          const cpl=cplRow?num(cplRow[mc.idx]):(leads>0?spend/leads:0);
+          ensure(detectedYear,mFull).meta={spend,leads,cpl,impressions:imprRow?num(imprRow[mc.idx]):0};
+        });
+        break;
+      }
+    }
+  }
+
+  return result; // { "2026-January": {...}, "2026-February": {...}, ... }
+}
+
+// ─── MAIN COMPONENT ──────────────────────────────────────────────────────────
+export default function Dashboard() {
+  const [history, setHistory]   = useState(null);   // loaded from storage
+  const [loading, setLoading]   = useState(true);
+  const [uploading, setUploading] = useState(false);
+  const [uploadMsg, setUploadMsg] = useState("");
+  const [view, setView]         = useState("dashboard"); // "dashboard" | "manage"
+  const [filter, setFilter]     = useState({ year:"All", quarter:"All", month:"All" });
+  const [xlsxReady, setXlsxReady] = useState(false);
+  const fileRef = useRef();
+  const chartRefs = useRef({});
+  const chartInstances = useRef({});
+
+  // ── Load scripts ──
+  useEffect(() => {
+    const loadScript = (src) => new Promise(res => {
+      if (document.querySelector(`script[src="${src}"]`)) { res(); return; }
+      const s = document.createElement("script"); s.src=src; s.onload=res; document.head.appendChild(s);
+    });
+    Promise.all([loadScript(XLSX_CDN), loadScript(CHART_CDN)]).then(() => setXlsxReady(true));
+  }, []);
+
+  // ── Load from storage ──
+  useEffect(() => {
+    async function load() {
+      try {
+        const res = await window.storage.get(STORAGE_KEY);
+        setHistory(res ? JSON.parse(res.value) : {});
+      } catch { setHistory({}); }
+      setLoading(false);
+    }
+    load();
+  }, []);
+
+  // ── Save to storage ──
+  const save = useCallback(async (newHistory) => {
+    try {
+      await window.storage.set(STORAGE_KEY, JSON.stringify(newHistory));
+    } catch(e) { console.error("Storage error:", e); }
+  }, []);
+
+  // ── Handle file upload ──
+  const handleFile = useCallback(async (file) => {
+    if (!xlsxReady) { setUploadMsg("Still loading parser…"); return; }
+    setUploading(true); setUploadMsg("Reading file…");
+    try {
+      const buf = await file.arrayBuffer();
+      setUploadMsg("Parsing sheets…");
+      const wb = window.XLSX.read(buf, { type:"array", cellDates:false });
+      const parsed = parseWorkbook(wb);
+      const keys = Object.keys(parsed);
+      if (keys.length === 0) throw new Error("No data rows found. Check sheet names match expected format.");
+      setUploadMsg("Saving to history…");
+      const newHistory = { ...history, ...parsed };
+      await save(newHistory);
+      setHistory(newHistory);
+      setUploadMsg(`✅ Saved ${keys.length} month(s): ${keys.join(", ")}`);
+      setView("dashboard");
+    } catch(e) {
+      setUploadMsg("❌ " + e.message);
+    }
+    setUploading(false);
+  }, [xlsxReady, history, save]);
+
+  // ── Delete a month ──
+  const deleteMonth = useCallback(async (key) => {
+    const n = { ...history }; delete n[key];
+    await save(n); setHistory(n);
+  }, [history, save]);
+
+  // ── Clear all ──
+  const clearAll = useCallback(async () => {
+    if (!confirm("Delete ALL stored data? This cannot be undone.")) return;
+    await save({}); setHistory({});
+  }, [save]);
+
+  // ── Computed filter options ──
+  const allKeys  = history ? Object.keys(history).sort() : [];
+  const allYears = [...new Set(allKeys.map(k => k.split("-")[0]))].sort();
+  const allMonths = MONTH_ORDER;
+
+  // ── Filtered records ──
+  const filtered = history ? Object.values(history).filter(rec => {
+    if (filter.year !== "All" && String(rec.year) !== filter.year) return false;
+    if (filter.quarter !== "All") {
+      const qMap = { Q1:[0,1,2], Q2:[3,4,5], Q3:[6,7,8], Q4:[9,10,11] };
+      if (!qMap[filter.quarter].includes(MONTH_ORDER.indexOf(rec.month))) return false;
+    }
+    if (filter.month !== "All" && rec.month !== filter.month) return false;
+    return true;
+  }).sort((a,b) => {
+    if (a.year !== b.year) return a.year - b.year;
+    return MONTH_ORDER.indexOf(a.month) - MONTH_ORDER.indexOf(b.month);
+  }) : [];
+
+  // ── Aggregated KPIs ──
+  const agg = {
+    totalLeads: filtered.reduce((a,r)=>a+(r.leads?.total||0),0),
+    facebook:   filtered.reduce((a,r)=>a+(r.leads?.facebook||0),0),
+    call:       filtered.reduce((a,r)=>a+(r.leads?.call||0),0),
+    website:    filtered.reduce((a,r)=>a+(r.leads?.website||0),0),
+    whatsapp:   filtered.reduce((a,r)=>a+(r.leads?.whatsapp||0),0),
+    conversions:filtered.reduce((a,r)=>a+(r.pipeline?.conversions||0),0),
+    convValue:  filtered.reduce((a,r)=>a+(r.pipeline?.value||0),0),
+    followUp:   filtered.reduce((a,r)=>a+(r.pipeline?.followUp||0),0),
+    quoteGiven: filtered.reduce((a,r)=>a+(r.pipeline?.quoteGiven||0),0),
+    converted:  filtered.reduce((a,r)=>a+(r.pipeline?.converted||0),0),
+    quoteLive:  filtered.reduce((a,r)=>a+(r.pipeline?.quoteLive||0),0),
+    saleLost:   filtered.reduce((a,r)=>a+(r.pipeline?.saleLost||0),0),
+    coldEnq:    filtered.reduce((a,r)=>a+(r.pipeline?.coldEnquiry||0),0),
+    metaSpend:  filtered.reduce((a,r)=>a+(r.meta?.spend||0),0),
+    googleSpend:filtered.reduce((a,r)=>a+(r.googleSpend||0),0),
+    seoClicks:  filtered.reduce((a,r)=>a+(r.seo?.clicks||0),0),
+    seoImpr:    filtered.reduce((a,r)=>a+(r.seo?.impressions||0),0),
+    metaLeads:  filtered.reduce((a,r)=>a+(r.meta?.leads||0),0),
+  };
+  agg.totalSpend  = agg.metaSpend + agg.googleSpend;
+  agg.roas        = agg.totalSpend > 0 ? agg.convValue / agg.totalSpend : 0;
+  agg.convRate    = agg.totalLeads > 0 ? (agg.conversions/agg.totalLeads)*100 : 0;
+  agg.costPerConv = agg.conversions > 0 ? agg.totalSpend/agg.conversions : 0;
+  agg.metaCPL     = agg.facebook > 0 ? agg.metaSpend/agg.facebook : 0;
+  agg.avgCTR      = filtered.filter(r=>r.seo).length > 0
+    ? filtered.filter(r=>r.seo).reduce((a,r)=>a+r.seo.ctr,0)/filtered.filter(r=>r.seo).length : 0;
+  agg.targetPct   = agg.convValue/(MONTHLY_TARGET*(filtered.length||1))*100;
+
+  // ── Chart: draw via canvas refs ──
+  useEffect(() => {
+    if (!xlsxReady || filtered.length === 0) return;
+    const labels = filtered.map(r => `${r.month.substring(0,3)} '${String(r.year).slice(2)}`);
+
+    const mk = (id, cfg) => {
+      const canvas = chartRefs.current[id];
+      if (!canvas) return;
+      if (chartInstances.current[id]) chartInstances.current[id].destroy();
+      chartInstances.current[id] = new window.Chart(canvas, cfg);
+    };
+
+    // Leads stacked bar
+    mk("cLeads", { type:"bar", data:{ labels, datasets:[
+      {label:"Facebook", data:filtered.map(r=>r.leads?.facebook||0), backgroundColor:"#2563eb", stack:"s"},
+      {label:"Call",     data:filtered.map(r=>r.leads?.call||0),     backgroundColor:"#10b981", stack:"s"},
+      {label:"Website",  data:filtered.map(r=>r.leads?.website||0),  backgroundColor:"#f59e0b", stack:"s"},
+      {label:"WhatsApp", data:filtered.map(r=>r.leads?.whatsapp||0), backgroundColor:"#6366f1", stack:"s"},
+      {label:"Others",   data:filtered.map(r=>(r.leads?.mail||0)+(r.leads?.tollFree||0)+(r.leads?.ecommerce||0)), backgroundColor:"#94a3b8", stack:"s"},
+    ]}, options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:"bottom",labels:{boxWidth:10,font:{size:10}}}},scales:{x:{stacked:true},y:{stacked:true}}}});
+
+    // Spend vs Value
+    mk("cSpend", { type:"bar", data:{ labels, datasets:[
+      {label:"Ad Spend",      data:filtered.map(r=>(r.meta?.spend||0)+(r.googleSpend||0)), backgroundColor:"#f43f5e", yAxisID:"y"},
+      {type:"line", label:"Conv. Value", data:filtered.map(r=>r.pipeline?.value||0), borderColor:"#10b981", backgroundColor:"transparent", yAxisID:"y2", tension:.3, pointRadius:4},
+    ]}, options:{responsive:true,maintainAspectRatio:false, plugins:{legend:{position:"bottom",labels:{boxWidth:10,font:{size:10}}}},
+      scales:{y:{position:"left",ticks:{callback:v=>`₹${(v/100000).toFixed(0)}L`}},
+              y2:{position:"right",grid:{drawOnChartArea:false},ticks:{callback:v=>`₹${(v/100000).toFixed(0)}L`}}}}});
+
+    // SEO trend
+    const seoRecs = filtered.filter(r=>r.seo);
+    if (seoRecs.length) mk("cSeo", { type:"line", data:{ labels:seoRecs.map(r=>`${r.month.substring(0,3)} '${String(r.year).slice(2)}`), datasets:[
+      {label:"Clicks",   data:seoRecs.map(r=>r.seo.clicks),   borderColor:"#2563eb", tension:.3},
+      {label:"Position", data:seoRecs.map(r=>r.seo.position), borderColor:"#f59e0b", tension:.3, borderDash:[4,4], yAxisID:"y2"},
+    ]}, options:{responsive:true,maintainAspectRatio:false, plugins:{legend:{position:"bottom",labels:{boxWidth:10,font:{size:10}}}},
+      scales:{y:{position:"left"},y2:{position:"right",reverse:true,grid:{drawOnChartArea:false}}}}});
+
+    // Meta CPL trend
+    const metaRecs = filtered.filter(r=>r.meta);
+    if (metaRecs.length) mk("cMeta", { type:"bar", data:{ labels:metaRecs.map(r=>`${r.month.substring(0,3)} '${String(r.year).slice(2)}`), datasets:[
+      {label:"Spend (₹)",data:metaRecs.map(r=>r.meta.spend),backgroundColor:"#6366f1",yAxisID:"y"},
+      {type:"line",label:"CPL (₹)",data:metaRecs.map(r=>r.meta.cpl),borderColor:"#f43f5e",backgroundColor:"transparent",yAxisID:"y2",tension:.3,pointRadius:4},
+    ]}, options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:"bottom",labels:{boxWidth:10,font:{size:10}}}},
+      scales:{y:{position:"left",ticks:{callback:v=>`₹${v}`}},y2:{position:"right",grid:{drawOnChartArea:false},ticks:{callback:v=>`₹${v}`}}}}});
+
+    // Models aggregated doughnut
+    const modAgg = {};
+    filtered.forEach(r=>{ Object.entries(r.models||{}).forEach(([k,v])=>{ modAgg[k]=(modAgg[k]||0)+v; }); });
+    const modEntries=Object.entries(modAgg).sort((a,b)=>b[1]-a[1]);
+    if (modEntries.length) mk("cModels",{type:"bar",data:{labels:modEntries.map(e=>e[0]),datasets:[{label:"Enquiries",data:modEntries.map(e=>e[1]),backgroundColor:COLORS}]},
+      options:{responsive:true,maintainAspectRatio:false,indexAxis:"y",plugins:{legend:{display:false}}}});
+
+    // Customer type doughnut
+    const ctAgg = {};
+    filtered.forEach(r=>{ Object.entries(r.customerTypes||{}).forEach(([k,v])=>{ ctAgg[k]=(ctAgg[k]||0)+v; }); });
+    const ctEntries=Object.entries(ctAgg).sort((a,b)=>b[1]-a[1]);
+    if (ctEntries.length) mk("cCustType",{type:"doughnut",data:{labels:ctEntries.map(e=>e[0]),datasets:[{data:ctEntries.map(e=>e[1]),backgroundColor:COLORS}]},
+      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:"bottom",labels:{boxWidth:10,font:{size:10}}}}}});
+
+    // Channel conversions doughnut
+    const cc = {website:0,call:0,facebook:0,whatsapp:0,ecommerce:0};
+    filtered.forEach(r=>{ if(r.channelConv) Object.keys(cc).forEach(k=>{ cc[k]+=(r.channelConv[k]||0); }); });
+    if (Object.values(cc).some(v=>v>0)) mk("cChanConv",{type:"doughnut",data:{labels:["Call","Website","Facebook","WhatsApp","Ecommerce"],datasets:[{data:[cc.call,cc.website,cc.facebook,cc.whatsapp,cc.ecommerce],backgroundColor:COLORS}]},
+      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:"bottom",labels:{boxWidth:10,font:{size:10}}}}}});
+
+    // Region stacked
+    const regionNames=[...new Set(filtered.flatMap(r=>Object.keys(r.regions||{})))].filter(n=>n.toLowerCase()!=="others");
+    if (regionNames.length) mk("cRegion",{type:"bar",data:{labels,datasets:regionNames.map((rn,i)=>({label:rn,data:filtered.map(r=>r.regions?.[rn]||0),backgroundColor:COLORS[i],stack:"s"}))},
+      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:"bottom",labels:{boxWidth:10,font:{size:10}}}},scales:{x:{stacked:true},y:{stacked:true}}}});
+
+  }, [filtered, xlsxReady]);
+
+  // ─── RENDER ───────────────────────────────────────────────────────────────
+  if (loading) return (
+    <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:"#0f1729",color:"#94a3b8",fontFamily:"system-ui",fontSize:16}}>
+      Loading stored data…
+    </div>
+  );
+
+  const S = styles;
+
+  // Manage Data view
+  if (view === "manage") return (
+    <div style={S.page}>
+      <div style={S.manageHeader}>
+        <div>
+          <div style={{fontSize:20,fontWeight:800,color:"#fff"}}>Manage Data History</div>
+          <div style={{fontSize:13,color:"#94a3b8",marginTop:4}}>{allKeys.length} months stored across {allYears.join(", ") || "—"}</div>
+        </div>
+        <button style={S.backBtn} onClick={()=>setView("dashboard")}>← Back to Dashboard</button>
+      </div>
+      <div style={{padding:"20px 24px",maxWidth:900,margin:"0 auto"}}>
+        {/* Upload section */}
+        <div style={S.uploadCard}>
+          <div style={{fontSize:15,fontWeight:700,color:"#1e293b",marginBottom:8}}>📥 Upload New Excel File</div>
+          <div style={{fontSize:13,color:"#64748b",marginBottom:16}}>
+            Upload any monthly or quarterly Excel file. New months are <b>added</b> to history. Existing months are <b>overwritten</b> with fresh data.
+            <br/>The year is auto-detected from sheet names or cell values (e.g. <code>Jan'2026</code>).
+          </div>
+          <div style={{display:"flex",gap:12,alignItems:"center",flexWrap:"wrap"}}>
+            <input ref={fileRef} type="file" accept=".xlsx,.xls" style={{display:"none"}} onChange={e=>{ if(e.target.files[0]) handleFile(e.target.files[0]); e.target.value=""; }} />
+            <button style={S.uploadBtn} disabled={uploading} onClick={()=>fileRef.current?.click()}>
+              {uploading ? "Processing…" : "📁 Choose Excel File"}
+            </button>
+            {uploadMsg && <span style={{fontSize:13,color:uploadMsg.startsWith("✅")?"#16a34a":uploadMsg.startsWith("❌")?"#dc2626":"#64748b"}}>{uploadMsg}</span>}
+          </div>
+        </div>
+
+        {/* Stored months list */}
+        <div style={{fontSize:13,fontWeight:700,color:"#64748b",textTransform:"uppercase",letterSpacing:".06em",margin:"24px 0 12px"}}>Stored Months</div>
+        {allKeys.length === 0
+          ? <div style={{color:"#94a3b8",fontSize:14,padding:"24px 0"}}>No data stored yet. Upload your first Excel file above.</div>
+          : <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:12}}>
+              {allKeys.map(key => {
+                const rec = history[key];
+                return (
+                  <div key={key} style={S.monthCard}>
+                    <div style={{fontWeight:700,fontSize:14,color:"#1e293b"}}>{rec.month} {rec.year}</div>
+                    <div style={{fontSize:12,color:"#64748b",marginTop:4}}>
+                      {rec.leads ? `${fmtN(rec.leads.total)} leads` : "No leads"} ·{" "}
+                      {rec.pipeline ? fmtL(rec.pipeline.value) : "No pipeline"}
+                    </div>
+                    <div style={{fontSize:11,color:"#94a3b8",marginTop:2}}>
+                      {rec.googleCampaigns.length} campaigns · {rec.cities.length} cities
+                    </div>
+                    <button style={S.deleteBtn} onClick={()=>{ if(confirm(`Delete ${rec.month} ${rec.year}?`)) deleteMonth(key); }}>✕ Remove</button>
+                  </div>
+                );
+              })}
+            </div>
+        }
+
+        {allKeys.length > 0 && (
+          <button style={{...S.deleteBtn,marginTop:24,padding:"10px 20px",fontSize:13}} onClick={clearAll}>
+            🗑 Clear All Data
+          </button>
+        )}
+      </div>
+    </div>
+  );
+
+  // Dashboard view
+  return (
+    <div style={S.page}>
+      {/* Header */}
+      <div style={S.header}>
+        <div>
+          <div style={{fontSize:18,fontWeight:800,color:"#fff"}}>Syona Roots — Digital Marketing Dashboard</div>
+          <div style={{fontSize:12,color:"#94a3b8",marginTop:3}}>
+            {filtered.length > 0
+              ? `${filtered.length} month(s) · ${filtered[0]?.month} ${filtered[0]?.year}${filtered.length>1?` → ${filtered[filtered.length-1]?.month} ${filtered[filtered.length-1]?.year}`:""}`
+              : "No data for selected filter"}
+          </div>
+        </div>
+        <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+          {/* Year filter */}
+          <select style={S.select} value={filter.year} onChange={e=>setFilter(f=>({...f,year:e.target.value,quarter:"All",month:"All"}))}>
+            <option value="All">All Years</option>
+            {allYears.map(y=><option key={y} value={y}>{y}</option>)}
+          </select>
+          {/* Quarter filter */}
+          <select style={S.select} value={filter.quarter} onChange={e=>setFilter(f=>({...f,quarter:e.target.value,month:"All"}))}>
+            <option value="All">All Quarters</option>
+            <option value="Q1">Q1 (Jan–Mar)</option>
+            <option value="Q2">Q2 (Apr–Jun)</option>
+            <option value="Q3">Q3 (Jul–Sep)</option>
+            <option value="Q4">Q4 (Oct–Dec)</option>
+          </select>
+          {/* Month filter */}
+          <select style={S.select} value={filter.month} onChange={e=>setFilter(f=>({...f,month:e.target.value}))}>
+            <option value="All">All Months</option>
+            {allMonths.map(m=><option key={m} value={m}>{m}</option>)}
+          </select>
+          <button style={S.manageBtn} onClick={()=>setView("manage")}>⚙ Manage Data</button>
+        </div>
+      </div>
+
+      {filtered.length === 0 ? (
+        <div style={{textAlign:"center",padding:"80px 24px",color:"#94a3b8",fontSize:15}}>
+          {allKeys.length === 0
+            ? <>No data yet. <button style={{...S.uploadBtn,display:"inline-block"}} onClick={()=>setView("manage")}>Upload your first Excel file →</button></>
+            : "No records match the selected filter."
+          }
+        </div>
+      ) : (
+        <div style={{padding:"0 20px 40px",maxWidth:1400,margin:"0 auto"}}>
+
+          {/* KPI Cards */}
+          <div style={S.sectionLabel}>Key Performance Indicators</div>
+          <div style={S.kpiGrid}>
+            {[
+              {label:"Total Leads", value:fmtN(agg.totalLeads), sub:`FB: ${fmtN(agg.facebook)} · Others: ${fmtN(agg.totalLeads-agg.facebook)}`, tag:"Combined"},
+              {label:"Total Ad Spend", value:agg.totalSpend<100000?fmtK(agg.totalSpend):fmtL(agg.totalSpend), sub:`Meta ${fmtK(agg.metaSpend)} · Google ${fmtK(agg.googleSpend)}`, tag:"Meta + Google"},
+              {label:"Conversions", value:fmtN(agg.conversions), sub:`Conv. rate: ${agg.convRate.toFixed(2)}%`, tag:"Closed deals"},
+              {label:"Conv. Value", value:fmtL(agg.convValue), sub:`ROAS: ${agg.roas.toFixed(1)}x`, tag:"Revenue"},
+              {label:"Meta CPL", value:`₹${Math.round(agg.metaCPL)}`, sub:`${fmtK(agg.metaSpend)} spent`, tag:"Facebook/IG"},
+              {label:"Organic Clicks", value:fmtN(agg.seoClicks), sub:`Avg CTR: ${agg.avgCTR.toFixed(1)}%`, tag:"Search Console"},
+              {label:"Cost / Conv.", value:`₹${Math.round(agg.costPerConv)}`, sub:"All channels combined", tag:"Efficiency"},
+              {label:"vs ₹50L/mo Target", value:`${Math.round(agg.targetPct)}%`,
+                sub:`${fmtL(agg.convValue)} earned`, tag:agg.targetPct>=100?"✅ Hit":"⚠️ Below",
+                tagColor:agg.targetPct>=100?"#dcfce7":"#fee2e2", tagTextColor:agg.targetPct>=100?"#16a34a":"#dc2626"},
+            ].map(k=>(
+              <div key={k.label} style={S.kpiCard}>
+                <div style={S.kpiTitle}>{k.label}</div>
+                <div style={S.kpiValue}>{k.value}</div>
+                <div style={S.kpiSub}>{k.sub}</div>
+                <div style={{...S.kpiTag,background:k.tagColor||"#eff6ff",color:k.tagTextColor||"#2563eb"}}>{k.tag}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Revenue vs Target */}
+          <div style={S.sectionLabel}>Revenue vs ₹50L Monthly Target</div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:12,marginBottom:24}}>
+            {filtered.filter(r=>r.pipeline).map(r=>{
+              const pct=(r.pipeline.value/MONTHLY_TARGET)*100, hit=pct>=100;
+              return (
+                <div key={r.key} style={S.targetCard}>
+                  <div style={{fontSize:12,color:"#64748b"}}>{r.month} {r.year}</div>
+                  <div style={{fontSize:26,fontWeight:800,color:hit?"#10b981":"#f43f5e"}}>{Math.round(pct)}%</div>
+                  <div style={{background:"#f1f5f9",borderRadius:99,height:6,marginTop:8,overflow:"hidden"}}>
+                    <div style={{height:"100%",width:`${Math.min(pct,100)}%`,background:hit?"#10b981":"#f43f5e",borderRadius:99}}/>
+                  </div>
+                  <div style={{fontSize:15,fontWeight:700,color:"#1e293b",marginTop:8}}>{fmtL(r.pipeline.value)}</div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Charts: Leads & Spend */}
+          <div style={S.sectionLabel}>Lead Generation & Spend</div>
+          <div style={S.grid2}>
+            <div style={S.card}><div style={S.chartTitle}>Lead Sources — Monthly</div><div style={S.chartWrap}><canvas ref={el=>chartRefs.current.cLeads=el}/></div></div>
+            <div style={S.card}><div style={S.chartTitle}>Spend vs Conversion Value</div><div style={S.chartWrap}><canvas ref={el=>chartRefs.current.cSpend=el}/></div></div>
+          </div>
+
+          {/* Charts: Product & Customer */}
+          <div style={S.sectionLabel}>Product & Customer Intelligence</div>
+          <div style={S.grid2}>
+            <div style={S.card}><div style={S.chartTitle}>Model-wise Enquiries</div><div style={S.chartWrap}><canvas ref={el=>chartRefs.current.cModels=el}/></div></div>
+            <div style={S.card}><div style={S.chartTitle}>Customer Type Breakdown</div><div style={S.chartWrap}><canvas ref={el=>chartRefs.current.cCustType=el}/></div></div>
+          </div>
+
+          {/* Pipeline */}
+          <div style={S.sectionLabel}>Pipeline & Conversion Analysis</div>
+          <div style={S.grid2}>
+            <div style={S.card}>
+              <div style={S.chartTitle}>Lead Pipeline Funnel</div>
+              <div style={{marginTop:16}}>
+                {[
+                  {l:"Total Leads",   v:agg.totalLeads,  c:"#2563eb"},
+                  {l:"Need Follow-up",v:agg.followUp,    c:"#6366f1"},
+                  {l:"Cold Enquiry",  v:agg.coldEnq,     c:"#f59e0b"},
+                  {l:"Quote Given",   v:agg.quoteGiven,  c:"#10b981"},
+                  {l:"Quotes Live",   v:agg.quoteLive,   c:"#06b6d4"},
+                  {l:"Converted",     v:agg.converted,   c:"#16a34a"},
+                  {l:"Sale Lost",     v:agg.saleLost,    c:"#f43f5e"},
+                ].map(s=>{
+                  const pct=agg.totalLeads>0?(s.v/agg.totalLeads)*100:0;
+                  return (
+                    <div key={s.l} style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,fontSize:12}}>
+                      <div style={{width:100,textAlign:"right",color:"#64748b",flexShrink:0}}>{s.l}</div>
+                      <div style={{flex:1,background:"#f1f5f9",borderRadius:4,height:22,overflow:"hidden"}}>
+                        <div style={{width:`${Math.max(pct,0.5)}%`,height:"100%",background:s.c,display:"flex",alignItems:"center",padding:"0 8px",color:"#fff",fontSize:11,fontWeight:600,transition:"width .5s"}}>{s.v}</div>
+                      </div>
+                      <div style={{width:80,fontWeight:700,flexShrink:0}}>{fmtN(s.v)} <span style={{color:"#94a3b8",fontWeight:400}}>{pct.toFixed(1)}%</span></div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            <div style={S.card}><div style={S.chartTitle}>Conversion by Channel</div><div style={S.chartWrap}><canvas ref={el=>chartRefs.current.cChanConv=el}/></div></div>
+          </div>
+
+          {/* Region & SEO */}
+          <div style={S.grid2}>
+            <div style={S.card}><div style={S.chartTitle}>Region-wise Lead Distribution</div><div style={S.chartWrap}><canvas ref={el=>chartRefs.current.cRegion=el}/></div></div>
+            <div style={S.card}><div style={S.chartTitle}>SEO — Clicks & Position Trend</div><div style={S.chartWrap}><canvas ref={el=>chartRefs.current.cSeo=el}/></div></div>
+          </div>
+
+          {/* Meta & Google */}
+          <div style={S.sectionLabel}>Paid Media Performance</div>
+          <div style={S.grid2}>
+            <div style={S.card}><div style={S.chartTitle}>Meta Ads — Spend & CPL Trend</div><div style={S.chartWrap}><canvas ref={el=>chartRefs.current.cMeta=el}/></div></div>
+            <div style={S.card}>
+              <div style={S.chartTitle}>Google Ads — Campaign Performance</div>
+              <div style={{overflowX:"auto",maxHeight:280,overflowY:"auto",marginTop:12}}>
+                <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+                  <thead><tr>{["Campaign","Spend","Inter.","CTR","CPC","Conv.","Rating"].map(h=><th key={h} style={{background:"#f8fafc",padding:"6px 8px",textAlign:"left",fontWeight:700,color:"#64748b",borderBottom:"1px solid #e2e8f0",position:"sticky",top:0}}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {(() => {
+                      const campMap={};
+                      filtered.forEach(r=>r.googleCampaigns.forEach(c=>{
+                        if(!campMap[c.name]) campMap[c.name]={...c};
+                        else { campMap[c.name].spend+=c.spend; campMap[c.name].conv+=c.conv; campMap[c.name].interactions+=c.interactions; }
+                      }));
+                      return Object.values(campMap).sort((a,b)=>b.conv-a.conv).map(c=>(
+                        <tr key={c.name}>
+                          <td style={{padding:"6px 8px",maxWidth:150,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",borderBottom:"1px solid #f1f5f9"}} title={c.name}>{c.name}</td>
+                          <td style={{padding:"6px 8px",borderBottom:"1px solid #f1f5f9"}}>{fmtINR(Math.round(c.spend))}</td>
+                          <td style={{padding:"6px 8px",borderBottom:"1px solid #f1f5f9"}}>{fmtN(c.interactions)}</td>
+                          <td style={{padding:"6px 8px",borderBottom:"1px solid #f1f5f9"}}>{(c.ctr||0).toFixed(1)}%</td>
+                          <td style={{padding:"6px 8px",borderBottom:"1px solid #f1f5f9"}}>₹{(c.cpc||0).toFixed(1)}</td>
+                          <td style={{padding:"6px 8px",borderBottom:"1px solid #f1f5f9"}}>{c.conv}</td>
+                          <td style={{padding:"6px 8px",borderBottom:"1px solid #f1f5f9"}}>
+                            <span style={{fontSize:10,fontWeight:700,padding:"2px 6px",borderRadius:4,...badgeStyle(c.rating)}}>{c.rating}</span>
+                          </td>
+                        </tr>
+                      ));
+                    })()}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          {/* Cities */}
+          <div style={S.sectionLabel}>City-Wise Conversion Value</div>
+          <div style={S.grid2}>
+            <div style={S.card}>
+              <div style={S.chartTitle}>Top Cities by Conversion Value</div>
+              <div style={{overflowX:"auto",maxHeight:300,overflowY:"auto",marginTop:12}}>
+                <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+                  <thead><tr>{["City","State","Month","Value"].map(h=><th key={h} style={{background:"#f8fafc",padding:"7px 10px",textAlign:"left",fontWeight:700,color:"#64748b",borderBottom:"1px solid #e2e8f0",position:"sticky",top:0}}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {[...filtered.flatMap(r=>r.cities.map(c=>({...c,month:r.month,year:r.year})))]
+                      .sort((a,b)=>b.value-a.value).slice(0,20).map((c,i)=>(
+                      <tr key={i}>
+                        <td style={{padding:"7px 10px",borderBottom:"1px solid #f1f5f9"}}>{c.city}</td>
+                        <td style={{padding:"7px 10px",borderBottom:"1px solid #f1f5f9"}}>{c.state}</td>
+                        <td style={{padding:"7px 10px",borderBottom:"1px solid #f1f5f9"}}>{c.month.substring(0,3)} '{String(c.year).slice(2)}</td>
+                        <td style={{padding:"7px 10px",borderBottom:"1px solid #f1f5f9",fontWeight:700}}>{fmtINR(c.value)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div style={S.card}>
+              <div style={S.chartTitle}>Region Distribution</div>
+              <div style={{marginTop:16}}>
+                {(() => {
+                  const rAgg={};
+                  filtered.forEach(r=>Object.entries(r.regions||{}).forEach(([k,v])=>{ if(k.toLowerCase()!=="others") rAgg[k]=(rAgg[k]||0)+v; }));
+                  const total=Object.values(rAgg).reduce((a,v)=>a+v,0);
+                  return Object.entries(rAgg).sort((a,b)=>b[1]-a[1]).map(([name,val],i)=>{
+                    const pct=total>0?(val/total)*100:0;
+                    return (
+                      <div key={name} style={{marginBottom:14}}>
+                        <div style={{display:"flex",justifyContent:"space-between",fontSize:12,marginBottom:4}}>
+                          <span style={{fontWeight:700}}>{name}</span>
+                          <span style={{color:"#64748b"}}>{Math.round(pct)}% ({fmtN(val)})</span>
+                        </div>
+                        <div style={{background:"#f1f5f9",borderRadius:99,height:8,overflow:"hidden"}}>
+                          <div style={{width:`${pct}%`,height:"100%",background:COLORS[i],borderRadius:99,transition:"width .5s"}}/>
+                        </div>
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+            </div>
+          </div>
+
+        </div>
+      )}
+    </div>
+  );
+}
+
+function badgeStyle(r) {
+  const m={Top:{background:"#dcfce7",color:"#16a34a"},Strong:{background:"#dbeafe",color:"#2563eb"},
+    Efficient:{background:"#ede9fe",color:"#7c3aed"},Review:{background:"#fef9c3",color:"#b45309"},
+    "Low ROI":{background:"#fee2e2",color:"#dc2626"},"No conv.":{background:"#f1f5f9",color:"#64748b"}};
+  return m[r]||{background:"#f1f5f9",color:"#64748b"};
+}
+
+const styles = {
+  page: { fontFamily:"-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif", background:"#f0f2f5", minHeight:"100vh", color:"#1e293b" },
+  header: { background:"#1e3a5f", padding:"16px 24px", display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:12, marginBottom:0 },
+  manageHeader: { background:"#1e3a5f", padding:"16px 24px", display:"flex", alignItems:"center", justifyContent:"space-between" },
+  select: { background:"rgba(255,255,255,0.12)", color:"#fff", border:"1px solid rgba(255,255,255,0.2)", borderRadius:8, padding:"7px 12px", fontSize:13, cursor:"pointer", outline:"none" },
+  manageBtn: { background:"rgba(255,255,255,0.1)", color:"#fff", border:"1px solid rgba(255,255,255,0.2)", borderRadius:8, padding:"8px 16px", fontSize:13, cursor:"pointer" },
+  backBtn: { background:"rgba(255,255,255,0.1)", color:"#fff", border:"1px solid rgba(255,255,255,0.2)", borderRadius:8, padding:"8px 16px", fontSize:13, cursor:"pointer" },
+  sectionLabel: { fontSize:11, fontWeight:700, textTransform:"uppercase", letterSpacing:".07em", color:"#64748b", margin:"24px 0 10px", paddingLeft:4 },
+  kpiGrid: { display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:14, marginBottom:24 },
+  kpiCard: { background:"#fff", borderRadius:12, border:"1px solid #e2e8f0", padding:"18px 20px" },
+  kpiTitle: { fontSize:11, fontWeight:600, textTransform:"uppercase", letterSpacing:".06em", color:"#64748b" },
+  kpiValue: { fontSize:28, fontWeight:800, color:"#1e293b", margin:"8px 0 4px" },
+  kpiSub:   { fontSize:12, color:"#64748b" },
+  kpiTag:   { display:"inline-block", marginTop:8, fontSize:11, fontWeight:600, borderRadius:4, padding:"2px 8px", background:"#eff6ff", color:"#2563eb" },
+  targetCard: { background:"#fff", borderRadius:12, border:"1px solid #e2e8f0", padding:"16px 18px" },
+  card: { background:"#fff", borderRadius:12, border:"1px solid #e2e8f0", padding:"18px 20px" },
+  chartTitle: { fontSize:14, fontWeight:700, color:"#1e293b", marginBottom:4 },
+  chartWrap: { position:"relative", height:220, marginTop:8 },
+  grid2: { display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:24 },
+  uploadCard: { background:"#fff", borderRadius:12, border:"1px solid #e2e8f0", padding:"20px 24px", marginBottom:24 },
+  uploadBtn: { background:"#2563eb", color:"#fff", border:"none", borderRadius:8, padding:"10px 22px", fontSize:14, fontWeight:600, cursor:"pointer" },
+  monthCard: { background:"#fff", borderRadius:10, border:"1px solid #e2e8f0", padding:"14px 16px", position:"relative" },
+  deleteBtn: { display:"block", marginTop:10, background:"transparent", color:"#f43f5e", border:"1px solid #fca5a5", borderRadius:6, padding:"4px 10px", fontSize:11, cursor:"pointer" },
+};
