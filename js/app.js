@@ -1,19 +1,94 @@
-/* app.js - Main Application Controller */
+/* app.js - UPDATED WITH QUARTER SELECTOR */
 (function() {
   let activeMonth = 'All Q1';
-  // Format helper functions
+  let activeQuarter = 'Q1';  // NEW: Track active quarter
+  let detectedQuarters = ['Q1'];  // NEW: Store detected quarters
+  
+  // ============================================
+  // DETECT QUARTERS FROM DATA
+  // ============================================
+  
+  function detectQuarters() {
+    const months = window.DashboardData.leadsData.map(d => d.month);
+    const quarters = [];
+    
+    // Q1: Jan, Feb, Mar
+    if (months.some(m => ['January', 'February', 'March'].includes(m))) {
+      quarters.push('Q1');
+    }
+    
+    // Q2: Apr, May, Jun
+    if (months.some(m => ['April', 'May', 'June'].includes(m))) {
+      quarters.push('Q2');
+    }
+    
+    // Q3: Jul, Aug, Sep
+    if (months.some(m => ['July', 'August', 'September'].includes(m))) {
+      quarters.push('Q3');
+    }
+    
+    // Q4: Oct, Nov, Dec
+    if (months.some(m => ['October', 'November', 'December'].includes(m))) {
+      quarters.push('Q4');
+    }
+    
+    detectedQuarters = quarters;
+    console.log(`✓ Detected quarters: ${quarters.join(', ')}`);
+    return quarters;
+  }
+  
+  function getMonthsForQuarter(quarter) {
+    const quarterMap = {
+      'Q1': ['January', 'February', 'March'],
+      'Q2': ['April', 'May', 'June'],
+      'Q3': ['July', 'August', 'September'],
+      'Q4': ['October', 'November', 'December']
+    };
+    return quarterMap[quarter] || [];
+  }
+  
+  // ============================================
+  // UPDATE QUARTER DROPDOWN
+  // ============================================
+  
+  function updateQuarterDropdown() {
+    const dropdown = document.getElementById('quarterDropdown');
+    if (!dropdown) return;
+    
+    const quarters = detectQuarters();
+    
+    // Clear existing options
+    dropdown.innerHTML = '';
+    
+    // Add each detected quarter
+    quarters.forEach(q => {
+      const option = document.createElement('option');
+      option.value = q;
+      option.textContent = q;
+      if (q === activeQuarter) option.selected = true;
+      dropdown.appendChild(option);
+    });
+  }
+  
+  // ============================================
+  // FORMAT HELPER FUNCTIONS (KEEP EXISTING)
+  // ============================================
+  
   function formatCurrencyLakhs(val) {
     if (val >= 10000000) {
       return `₹${(val / 10000000).toFixed(2)}Cr`;
     }
     return `₹${(val / 100000).toFixed(2)}L`;
   }
+  
   function formatCurrencyThousands(val) {
     return `₹${(val / 1000).toFixed(1)}K`;
   }
+  
   function formatNumber(num) {
     return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
   }
+  
   function formatIndianCurrency(num) {
     const x = num.toString().split('.');
     let lastThree = x[0].substring(x[0].length - 3);
@@ -24,7 +99,11 @@
     const res = otherLines.replace(/\B(?=(\d{2})+(?!\d))/g, ",") + lastThree;
     return '₹' + res + (x.length > 1 ? '.' + x[1].substring(0, 2) : '');
   }
-  // Update DOM elements with active state metrics
+  
+  // ============================================
+  // UPDATE KPIs (MODIFIED FOR QUARTER VIEW)
+  // ============================================
+  
   function updateKPIs(data) {
     document.getElementById('totalLeadsVal').innerText = formatNumber(data.totalLeads);
     document.getElementById('totalLeadsSub').innerText = `FB: ${formatNumber(data.fbLeads)} · Others: ${formatNumber(data.otherLeads)}`;
@@ -46,13 +125,17 @@
     const metaCpl = data.fbLeads > 0 ? Math.round(data.metaSpend / data.fbLeads) : 0;
     document.getElementById('metaCplVal').innerText = `₹${metaCpl}`;
     document.getElementById('metaCplSub').innerText = activeMonth === 'All Q1' ? 'Best: Feb ₹58' : `Active Month CPL`;
+    
     document.getElementById('organicClicksVal').innerText = formatNumber(data.totalSeoClicks);
     document.getElementById('organicClicksSub').innerText = `Avg CTR: ${data.avgSeoCtr.toFixed(1)}%`;
+    
     document.getElementById('costPerConvVal').innerText = `₹${Math.round(data.costPerConv)}`;
     document.getElementById('costPerConvSub').innerText = 'Across all channels';
+    
     const targetLabel = activeMonth === 'All Q1' ? '₹1.5Cr (3×50L) target' : '₹50L monthly target';
     document.getElementById('targetAchievedVal').innerText = `${Math.round(data.targetPct)}%`;
     document.getElementById('targetAchievedSub').innerText = `vs ${targetLabel}`;
+    
     const targetStatusEl = document.getElementById('targetStatusText');
     if (data.targetPct >= 100) {
       targetStatusEl.innerText = "Exceeded monthly target";
@@ -62,6 +145,7 @@
       targetStatusEl.style.color = "var(--accent-rose)";
     }
   }
+  
   function updateMonthlyTargets() {
     const dataObj = window.DashboardData;
     const janVal = 2708243;
@@ -86,6 +170,7 @@
     document.getElementById('febTargetPct').className = febPct >= 100 ? 'target-pct hit' : 'target-pct miss';
     document.getElementById('marTargetPct').className = marPct >= 100 ? 'target-pct hit' : 'target-pct miss';
   }
+  
   function updatePipelineFunnel(data) {
     const { funnel } = data;
     const stages = [
@@ -106,6 +191,7 @@
       }
     });
   }
+  
   function updateGoogleCampaignsTable() {
     const tbody = document.getElementById('googleCampaignsBody');
     if (!tbody) return;
@@ -153,6 +239,7 @@
       tbody.appendChild(row);
     });
   }
+  
   function updateCitiesTable() {
     const tbody = document.getElementById('citiesBody');
     if (!tbody) return;
@@ -176,6 +263,7 @@
       tbody.appendChild(row);
     });
   }
+  
   function updateRegionLeads(monthFilter) {
     const isQ1 = monthFilter === 'All Q1';
     let south = 1117, north = 562, west = 428, east = 215;
@@ -214,6 +302,7 @@
     document.getElementById('path_west')?.classList.add('active-west');
     document.getElementById('path_east')?.classList.add('active-east');
   }
+  
   function updateDashboard() {
     const dataObj = window.DashboardData;
     const data = dataObj.getFilteredData(activeMonth);
@@ -226,6 +315,37 @@
     window.DashboardCharts.updateAllCharts(activeMonth);
     window.DashboardInsights.updateInsights(activeMonth);
   }
+  
+  function setupQuarterDropdown() {
+    const dropdown = document.getElementById('quarterDropdown');
+    if (!dropdown) return;
+    
+    dropdown.addEventListener('change', (e) => {
+      activeQuarter = e.target.value;
+      const monthsInQuarter = getMonthsForQuarter(activeQuarter);
+      
+      // Update month filter tabs to show only months in selected quarter
+      const tabs = document.querySelectorAll('.filter-tab');
+      tabs.forEach(tab => {
+        const month = tab.dataset.month;
+        if (month === 'All Q1') {
+          tab.style.display = monthsInQuarter.length === 3 ? 'block' : 'none';
+          tab.textContent = `All ${activeQuarter}`;
+        } else {
+          tab.style.display = monthsInQuarter.includes(month) ? 'block' : 'none';
+        }
+      });
+      
+      // Set active month to first month of quarter
+      activeMonth = `All ${activeQuarter}`;
+      tabs.forEach(tab => tab.classList.remove('active'));
+      tabs[0].classList.add('active');
+      
+      console.log(`Switched to ${activeQuarter}, showing months: ${monthsInQuarter.join(', ')}`);
+      updateDashboard();
+    });
+  }
+  
   function setupFilters() {
     const tabs = document.querySelectorAll('.filter-tab');
     tabs.forEach(tab => {
@@ -237,6 +357,7 @@
       });
     });
   }
+  
   function setupCsvImporter() {
     const uploadBtn = document.getElementById('uploadBtn');
     const fileInput = document.getElementById('csvFileInput');
@@ -253,6 +374,7 @@
       reader.readAsText(file);
     });
   }
+  
   function parseCSV(text, filename) {
     const lines = text.split('\n').map(line => line.trim()).filter(line => line.length > 0);
     if (lines.length < 2) {
@@ -262,25 +384,35 @@
     const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
     if (headers.includes('total leads') || headers.includes('facebook')) {
       alert(`Successfully parsed and loaded leads data from: ${filename}!`);
+      updateQuarterDropdown();
       updateDashboard();
       return;
     }
     if (headers.includes('conversion value') || headers.includes('follow up')) {
       alert(`Successfully parsed and loaded pipeline funnel stats from: ${filename}!`);
+      updateQuarterDropdown();
       updateDashboard();
       return;
     }
     if (headers.includes('avg. cost') || headers.includes('interactions')) {
       alert(`Successfully parsed Google Ads campaigns statistics from: ${filename}!`);
+      updateQuarterDropdown();
       updateDashboard();
       return;
     }
     alert(`Uploaded ${filename} - custom table parsed successfully. Dashboard statistics updated!`);
+    updateQuarterDropdown();
     updateDashboard();
   }
+  
   document.addEventListener('DOMContentLoaded', () => {
+    console.log('🚀 Dashboard initializing...');
+    detectQuarters();
+    updateQuarterDropdown();
+    setupQuarterDropdown();
     setupFilters();
     setupCsvImporter();
     updateDashboard();
+    console.log('✓ Dashboard ready');
   });
 })();
