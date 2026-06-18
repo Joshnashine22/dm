@@ -31,6 +31,25 @@
           </svg>
           Import Excel CSV
         </button>
+        <div style="display: flex; align-items: center; gap: 8px;">
+  <label for="quarterDropdown" style="font-size: 12px; font-weight: 600; color: #666; white-space: nowrap;">Quarter:</label>
+  <select id="quarterDropdown" style="
+    padding: 8px 12px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    background: white;
+    color: #1f4e79;
+    cursor: pointer;
+    min-width: 100px;
+  ">
+    <option value="Q1">Q1 (Jan - Mar)</option>
+    <option value="Q2">Q2 (Apr - Jun)</option>
+    <option value="Q3">Q3 (Jul - Sep)</option>
+    <option value="Q4">Q4 (Oct - Dec)</option>
+  </select>
+</div>
         <!-- Dynamic Date Tabs -->
         <div class="filter-tabs">
           <button class="filter-tab active" data-month="All Q1">All Q1</button>
