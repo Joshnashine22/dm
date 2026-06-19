@@ -1,4 +1,157 @@
 /* app.js - COMPLETE VERSION WITH QUARTERS + EXCEL AUTO-LOADER */
+// Add this line at TOP of app-fixed.js, BEFORE your existing code
+const QuarterManager = {
+  currentQuarter: "Q1",
+  currentMonth: "January",
+  
+  quarterConfig: {
+    Q1: { months: ["January", "February", "March"], label: "Q1 (Jan - Mar)" },
+    Q2: { months: ["April", "May", "June"], label: "Q2 (Apr - Jun)" },
+    Q3: { months: ["July", "August", "September"], label: "Q3 (Jul - Sep)" },
+    Q4: { months: ["October", "November", "December"], label: "Q4 (Oct - Dec)" }
+  },
+
+  init() {
+    this.setupQuarterDropdown();
+    this.setupMonthTabs();
+    this.updateDashboard("All Q1");
+  },
+
+  setupQuarterDropdown() {
+    const quarterDropdown = document.getElementById("quarterDropdown");
+    if (!quarterDropdown) return;
+    quarterDropdown.addEventListener("change", (e) => {
+      const quarter = e.target.value;
+      this.currentQuarter = quarter;
+      this.updateMonthTabs(quarter);
+      this.updateDashboard(`All ${quarter}`);
+    });
+  },
+
+  updateMonthTabs(quarter) {
+    const filterTabsContainer = document.querySelector(".filter-tabs");
+    const months = this.quarterConfig[quarter].months;
+    filterTabsContainer.innerHTML = "";
+    
+    const allBtn = document.createElement("button");
+    allBtn.className = "filter-tab active";
+    allBtn.dataset.month = `All ${quarter}`;
+    allBtn.textContent = `All ${quarter}`;
+    filterTabsContainer.appendChild(allBtn);
+    
+    months.forEach((month, index) => {
+      const btn = document.createElement("button");
+      btn.className = "filter-tab";
+      if (index === 0) btn.classList.add("active");
+      btn.dataset.month = month;
+      btn.textContent = month;
+      filterTabsContainer.appendChild(btn);
+    });
+    
+    this.setupMonthTabs();
+  },
+
+  setupMonthTabs() {
+    const filterTabs = document.querySelectorAll(".filter-tab");
+    filterTabs.forEach(tab => {
+      tab.addEventListener("click", (e) => {
+        filterTabs.forEach(t => t.classList.remove("active"));
+        e.target.classList.add("active");
+        const month = e.target.dataset.month;
+        this.currentMonth = month;
+        this.updateDashboard(month);
+      });
+    });
+  },
+
+  updateDashboard(filterValue) {
+    const data = window.DashboardData.getFilteredData(filterValue);
+    
+    // Update KPI cards
+    document.getElementById("totalLeadsVal").textContent = data.totalLeads;
+    document.getElementById("totalLeadsSub").textContent = `${data.fbLeads} from Facebook`;
+    document.getElementById("totalSpendVal").textContent = this.formatCurrency(data.totalSpend);
+    document.getElementById("totalSpendSub").textContent = `Google: ${this.formatCurrency(data.googleSpend)} + Meta: ${this.formatCurrency(data.metaSpend)}`;
+    document.getElementById("conversionsVal").textContent = data.totalConversions;
+    document.getElementById("conversionsSub").textContent = `${data.convRate.toFixed(2)}% conversion rate`;
+    document.getElementById("convValueVal").textContent = this.formatCurrency(data.totalConvValue);
+    document.getElementById("convValueSub").textContent = `ROAS: ${data.roas.toFixed(2)}x`;
+    document.getElementById("organicClicksVal").textContent = data.totalSeoClicks;
+    document.getElementById("organicClicksSub").textContent = `Avg CTR: ${data.avgSeoCtr.toFixed(2)}%`;
+    document.getElementById("costPerConvVal").textContent = `₹${data.costPerConv.toFixed(0)}`;
+    document.getElementById("costPerConvSub").textContent = "Google + Meta combined";
+    
+    // Update target cards
+    this.updateDynamicTargetCards(filterValue);
+    
+    // Update charts
+    if (window.DashboardCharts && window.DashboardCharts.updateAllCharts) {
+      window.DashboardCharts.updateAllCharts(filterValue);
+    }
+  },
+
+  updateDynamicTargetCards(filterValue) {
+    let quarter = this.currentQuarter;
+    let months = this.quarterConfig[quarter].months;
+    
+    if (!filterValue.startsWith("All")) {
+      for (let [q, config] of Object.entries(this.quarterConfig)) {
+        if (config.months.includes(filterValue)) {
+          quarter = q;
+          months = config.months;
+          break;
+        }
+      }
+    }
+    
+    const container = document.querySelector(".dashboard-row-3col");
+    if (!container) return;
+    container.innerHTML = "";
+    
+    months.forEach(month => {
+      const monthData = window.DashboardData.getFilteredData(month);
+      const targetPct = monthData.targetPct;
+      const isHit = targetPct >= 100;
+      
+      const card = document.createElement("div");
+      card.className = "card target-card";
+      card.innerHTML = `
+        <div class="target-left">
+          <span class="target-title">${month} — vs ₹50L target</span>
+          <div class="target-pct ${isHit ? 'hit' : 'miss'}">${targetPct.toFixed(0)}%</div>
+          <span class="target-val-label">of target achieved</span>
+          <div class="progress-bar-container">
+            <div class="progress-bar ${isHit ? 'hit' : 'miss'}" style="width: ${Math.min(targetPct, 100)}%"></div>
+          </div>
+        </div>
+        <div class="target-value">
+          <div class="target-val-label">actual value</div>
+          <div class="target-val-amount">${this.formatCurrencyShort(monthData.totalConvValue)}</div>
+        </div>
+      `;
+      container.appendChild(card);
+    });
+  },
+
+  formatCurrency(value) {
+    if (value >= 10000000) return `₹${(value / 10000000).toFixed(2)} Cr`;
+    if (value >= 100000) return `₹${(value / 100000).toFixed(2)} L`;
+    return `₹${value.toFixed(0)}`;
+  },
+
+  formatCurrencyShort(value) {
+    return `₹${(value / 100000).toFixed(2)}L`;
+  }
+};
+
+// Initialize
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", () => QuarterManager.init());
+} else {
+  QuarterManager.init();
+}
+
+// Your existing app-fixed.js code continues below...
 (function() {
   let activeMonth = 'All Q1';
   let activeQuarter = 'Q1';
