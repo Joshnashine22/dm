@@ -11,7 +11,15 @@ window.DashboardCharts = {
     this.resetCanvas(canvasId);
     const ctx = document.getElementById(canvasId).getContext('2d');
     const dataObj = window.DashboardData;
-    const months = ['January', 'February', 'March'];
+    // Get months dynamically based on quarter/month filter
+const getMonthsForFilter = (monthFilter) => {
+  if (monthFilter === 'All Q1') return ['January', 'February', 'March'];
+  if (monthFilter === 'All Q2') return ['April', 'May', 'June'];
+  if (monthFilter === 'All Q3') return ['July', 'August', 'September'];
+  if (monthFilter === 'All Q4') return ['October', 'November', 'December'];
+  // Single month or specific month
+  return window.DashboardData.leadsData.map(d => d.month);
+};
     const fbData = dataObj.leadsData.map(d => d.facebook);
     const callData = dataObj.leadsData.map(d => d.call);
     const webData = dataObj.leadsData.map(d => d.website);
@@ -58,7 +66,15 @@ window.DashboardCharts = {
     this.resetCanvas(canvasId);
     const ctx = document.getElementById(canvasId).getContext('2d');
     const dataObj = window.DashboardData;
-    const months = ['January', 'February', 'March'];
+    // Get months dynamically based on quarter/month filter
+const getMonthsForFilter = (monthFilter) => {
+  if (monthFilter === 'All Q1') return ['January', 'February', 'March'];
+  if (monthFilter === 'All Q2') return ['April', 'May', 'June'];
+  if (monthFilter === 'All Q3') return ['July', 'August', 'September'];
+  if (monthFilter === 'All Q4') return ['October', 'November', 'December'];
+  // Single month or specific month
+  return window.DashboardData.leadsData.map(d => d.month);
+};
     const spendData = months.map(m => {
       const gSpend = dataObj.googleCampaignsData[m].reduce((sum, c) => sum + c.spend, 0);
       const mSpend = dataObj.metaAdsMonthly.find(x => x.month === m).spend;
@@ -265,7 +281,15 @@ window.DashboardCharts = {
     this.resetCanvas(canvasId);
     const ctx = document.getElementById(canvasId).getContext('2d');
     const dataObj = window.DashboardData;
-    const months = ['January', 'February', 'March'];
+    // Get months dynamically based on quarter/month filter
+const getMonthsForFilter = (monthFilter) => {
+  if (monthFilter === 'All Q1') return ['January', 'February', 'March'];
+  if (monthFilter === 'All Q2') return ['April', 'May', 'June'];
+  if (monthFilter === 'All Q3') return ['July', 'August', 'September'];
+  if (monthFilter === 'All Q4') return ['October', 'November', 'December'];
+  // Single month or specific month
+  return window.DashboardData.leadsData.map(d => d.month);
+};
     const southData = dataObj.regionalLeadsMonthly.map(d => d.south);
     const northData = dataObj.regionalLeadsMonthly.map(d => d.north);
     const westData = dataObj.regionalLeadsMonthly.map(d => d.west);
@@ -306,7 +330,15 @@ window.DashboardCharts = {
     this.resetCanvas(canvasId);
     const ctx = document.getElementById(canvasId).getContext('2d');
     const dataObj = window.DashboardData;
-    const months = ['January', 'February', 'March'];
+    // Get months dynamically based on quarter/month filter
+const getMonthsForFilter = (monthFilter) => {
+  if (monthFilter === 'All Q1') return ['January', 'February', 'March'];
+  if (monthFilter === 'All Q2') return ['April', 'May', 'June'];
+  if (monthFilter === 'All Q3') return ['July', 'August', 'September'];
+  if (monthFilter === 'All Q4') return ['October', 'November', 'December'];
+  // Single month or specific month
+  return window.DashboardData.leadsData.map(d => d.month);
+};
     const clicks = dataObj.seoData.map(d => d.clicks);
     const positions = dataObj.seoData.map(d => d.position);
     const getOpacities = (index) => {
@@ -374,7 +406,15 @@ window.DashboardCharts = {
     this.resetCanvas(canvasId);
     const ctx = document.getElementById(canvasId).getContext('2d');
     const dataObj = window.DashboardData;
-    const months = ['January', 'February', 'March'];
+    // Get months dynamically based on quarter/month filter
+const getMonthsForFilter = (monthFilter) => {
+  if (monthFilter === 'All Q1') return ['January', 'February', 'March'];
+  if (monthFilter === 'All Q2') return ['April', 'May', 'June'];
+  if (monthFilter === 'All Q3') return ['July', 'August', 'September'];
+  if (monthFilter === 'All Q4') return ['October', 'November', 'December'];
+  // Single month or specific month
+  return window.DashboardData.leadsData.map(d => d.month);
+};
     const spend = dataObj.metaAdsMonthly.map(d => d.spend / 1000);
     const cpl = dataObj.metaAdsMonthly.map(d => d.cpl);
     const getOpacities = (index) => {
